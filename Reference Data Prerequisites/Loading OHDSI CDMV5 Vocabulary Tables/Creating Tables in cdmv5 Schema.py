@@ -13,94 +13,93 @@ conn_params = {
 create_table_statements = [
     """
     CREATE TABLE cdmv5.concept (
-        concept_id CHAR,
-        concept_name CHAR,
-        domain_id CHAR,
-        vocabulary_id CHAR,
-        concept_class_id CHAR,
-        standard_concept CHAR,
-        concept_code CHAR,
+        concept_id TEXT,
+        concept_name TEXT,
+        domain_id TEXT,
+        vocabulary_id TEXT,
+        concept_class_id TEXT,
+        standard_concept TEXT,
+        concept_code TEXT,
         valid_start_date TIMESTAMP WITHOUT TIME ZONE,
         valid_end_date TIMESTAMP WITHOUT TIME ZONE,
-        invalid_reason CHAR
+        invalid_reason TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.vocabulary (
-        vocabulary_id CHAR,
-        vocabulary_name CHAR,
-        vocabulary_reference CHAR,
-        vocabulary_version CHAR,
-        vocabulary_concept_id CHAR
+        vocabulary_id TEXT,
+        vocabulary_name TEXT,
+        vocabulary_reference TEXT,
+        vocabulary_version TEXT,
+        vocabulary_concept_id TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.concept_ancestor (
-        ancestor_concept_id CHAR,
-        descendant_concept_id CHAR,
-        min_levels_of_separation CHAR,
-        max_levels_of_separation CHAR
+        ancestor_concept_id TEXT,
+        descendant_concept_id TEXT,
+        min_levels_of_separation TEXT,
+        max_levels_of_separation TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.concept_relationship (
-        concept_id_1 CHAR,
-        concept_id_2 CHAR,
-        relationship_id CHAR,
+        concept_id_1 TEXT,
+        concept_id_2 TEXT,
+        relationship_id TEXT,
         valid_start_date TIMESTAMP WITHOUT TIME ZONE,
         valid_end_date TIMESTAMP WITHOUT TIME ZONE,
-        invalid_reason CHAR
+        invalid_reason TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.relationship (
-        relationship_id CHAR,
-        relationship_name CHAR,
-        is_hierarchical CHAR,
-        defines_ancestry CHAR,
-        reverse_relationship_id CHAR,
-        relationship_concept_id CHAR
+        relationship_id TEXT,
+        relationship_name TEXT,
+        is_hierarchical TEXT,
+        defines_ancestry TEXT,
+        reverse_relationship_id TEXT,
+        relationship_concept_id TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.concept_synonym (
-        concept_id CHAR,
-        concept_synonym_name CHAR,
-        language_concept_id CHAR
+        concept_id TEXT,
+        concept_synonym_name TEXT,
+        language_concept_id TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.domain (
-        domain_id CHAR,
-        domain_name CHAR,
-        domain_concept_id CHAR
+        domain_id TEXT,
+        domain_name TEXT,
+        domain_concept_id TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.concept_class (
-        concept_class_id CHAR,
-        concept_class_name CHAR,
-        concept_class_concept_id CHAR
+        concept_class_id TEXT,
+        concept_class_name TEXT,
+        concept_class_concept_id TEXT
     )
     """,
     """
     CREATE TABLE cdmv5.drug_strength (
-        drug_concept_id CHAR,
-        ingredient_concept_id CHAR,
-        amount_value VARCHAR,
-        amount_unit_concept_id VARCHAR,
-        numerator_value VARCHAR,
-        numerator_unit_concept_id VARCHAR,
-        denominator_value VARCHAR,
-        denominator_unit_concept_id VARCHAR,
-        box_size VARCHAR,
+        drug_concept_id TEXT,
+        ingredient_concept_id TEXT,
+        amount_value TEXT,
+        amount_unit_concept_id TEXT,
+        numerator_value TEXT,
+        numerator_unit_concept_id TEXT,
+        denominator_value TEXT,
+        denominator_unit_concept_id TEXT,
+        box_size TEXT,
         valid_start_date TIMESTAMP WITHOUT TIME ZONE,
         valid_end_date TIMESTAMP WITHOUT TIME ZONE,
-        invalid_reason CHAR
+        invalid_reason TEXT
     )
     """
 ]
-
 
 def create_tables():
     try:
@@ -122,7 +121,6 @@ def create_tables():
 
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
-
 
 if __name__ == "__main__":
     create_tables()
