@@ -1,0 +1,51 @@
+#!/bin/sh
+##########################################################################
+# Create the combined reaction files with the filename appended as the last column
+# NOTE: the reaction file formats are in two versions
+# We will call the file format before 2014 Q3 version A and everything from 2014 Q3 onwards, version B
+#
+# LTS Computing LLC
+##########################################################################
+
+# Define the base directory for files
+base_dir="ascii"
+
+# Define output files for version A and B
+output_file_a="${base_dir}/all_version_A_reac_data_with_filename.txt"
+output_file_b="${base_dir}/all_version_B_reac_data_with_filename.txt"
+
+# Make sure output files start empty
+> "$output_file_a"
+> "$output_file_b"
+
+# Function to process files, appending filename as the last column
+process_file() {
+    local file_prefix="$1"
+    local version="$2"
+    local file_path="${base_dir}/${file_prefix}.txt"
+    local output_file="${base_dir}/${file_prefix}_with_filename.txt"
+
+    if [[ "$version" == "A" ]]; then
+        # Version A: Add filename column name to the header and append to version A output file
+        sed 's/\r$//' "$file_path" | sed '1 s/$/ filename/' | sed "2,\$ s|\$| ${file_path}|" >> "$output_file_a"
+    else
+        # Version B: Do not modify the header, just append the filename and append to version B output file
+        sed 's/\r$//' "$file_path" | sed '1d' | sed "1,\$ s|\$| ${file_path}|" >> "$output_file_b"
+    fi
+}
+
+# Version A file prefixes
+version_a_prefixes=( "reac12q4" "REAC13Q1" "REAC13Q2" "REAC13Q3" "REAC13Q4" "REAC14Q1" "REAC14Q2" )
+
+# Version B file prefixes
+version_b_prefixes=( "REAC14Q3" "REAC14Q4" "REAC15Q1" "REAC15Q2" "REAC15Q3" "REAC15Q4" "REAC16Q1" "REAC16Q2" "REAC16Q3" "REAC16Q4" "REAC17Q1" "REAC17Q2" "REAC17Q3" "REAC17Q4" "REAC18Q1" "REAC18Q2" "REAC18Q3" "REAC18Q4" "REAC19Q1" "REAC19Q2" "REAC19Q3" "REAC19Q4" "REAC20Q1" "REAC20Q2" "REAC20Q3" "REAC20Q4" "REAC21Q1" "REAC21Q2" "REAC21Q3" "REAC21Q4" "REAC22Q1" "REAC22Q2" "REAC22Q3" "REAC22Q4" "REAC23Q1" "REAC23Q2" "REAC23Q3" "REAC23Q4" )
+
+# Process Version A files
+for prefix in "${version_a_prefixes[@]}"; do
+    process_file "$prefix" "A"
+done
+
+# Process Version B files
+for prefix in "${version_b_prefixes[@]}"; do
+    process_file "$prefix" "B"
+done

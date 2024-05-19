@@ -1,0 +1,26 @@
+#!/bin/sh
+##########################################################################
+# create the combined legacy therapy files with the filename appended as the last column
+#
+# LTS Computing LLC
+##########################################################################
+
+# process the first file - including adding "filename" column name to the header line at the start of the file
+f="ascii/THER04Q1.TXT"
+thefilenamenosuffix=$(basename $f .TXT)
+# remove windows carriage return, fix bad data records with embedded \n, add on the "filename" column name to the header line and add the filename as the last column on each line
+# output to the all data file
+sed 's/\r//g' $f | sed '1,1 s/$/\$FILENAME/' | sed "2,$ s/$/$f/" > all_ther_legacy_data_with_filename.txt
+
+# process the other files and concatenate to the all data file
+FILES="
+ascii/THER04Q2.TXT  ascii/THER04Q3.TXT  ascii/THER04Q4.TXT  ascii/THER05Q1.TXT  ascii/THER05Q2.TXT  ascii/THER05Q3.TXT  ascii/THER05Q4.TXT  ascii/THER06Q1.TXT  ascii/THER06Q2.TXT  ascii/THER06Q3.TXT  ascii/THER06Q4.TXT  ascii/THER07Q1.TXT  ascii/THER07Q2.TXT
+ascii/THER07Q3.TXT  ascii/THER07Q4.TXT  ascii/THER08Q1.TXT  ascii/THER08Q2.TXT  ascii/THER08Q3.TXT  ascii/THER08Q4.TXT  ascii/THER09Q1.TXT  ascii/THER09Q2.TXT  ascii/THER09Q3.TXT  ascii/THER09Q4.TXT  ascii/THER10Q1.TXT  ascii/THER10Q2.TXT  ascii/THER10Q3.TXT  ascii/THER10Q4.TXT
+ascii/THER11Q1.TXT  ascii/THER11Q2.TXT  ascii/THER11Q3.TXT  ascii/THER11Q4.TXT  ascii/THER12Q1.TXT  ascii/THER12Q2.TXT  ascii/THER12Q3.TXT
+"
+for f in $FILES
+do
+        thefilenamenosuffix=$(basename $f .TXT)
+        # remove windows carriage return,fix bad data records with embedded \n, remove the header line and add the filename as the last column on each line
+        sed 's/\r//g' $f | sed '1,1d' | sed "1,$ s/$/$f/" >> all_ther_legacy_data_with_filename.txt
+done

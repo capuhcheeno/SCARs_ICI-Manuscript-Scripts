@@ -1,0 +1,51 @@
+#!/bin/sh
+##########################################################################
+# create combined drug files with the filename appended as the last column
+# and output into version A and version B files separately.
+# NOTE the drug file formats are in two versions
+# We will call the file format before 2014 Q3 version A and everything from 2014 Q3 onwards, version B
+#
+# LTS Computing LLC
+##########################################################################
+
+# Base directory for files
+base_dir="ascii"
+
+# Initialize arrays for Version A and B file prefixes
+version_a_prefixes=( "drug12q4" "DRUG13Q1" "DRUG13Q2" "DRUG13Q3" "DRUG13Q4" "DRUG14Q1" "DRUG14Q2" )
+version_b_prefixes=( "DRUG14Q3" "DRUG14Q4" "DRUG15Q1" "DRUG15Q2" "DRUG15Q3" "DRUG15Q4" "DRUG16Q1" "DRUG16Q2" "DRUG16Q3" "DRUG16Q4" "DRUG17Q1" "DRUG17Q2" "DRUG17Q3" "DRUG17Q4" "DRUG18Q1" "DRUG18Q2" "DRUG18Q3" "DRUG18Q4" "DRUG19Q1" "DRUG19Q2" "DRUG19Q3" "DRUG19Q4" "DRUG20Q1" "DRUG20Q2" "DRUG20Q3" "DRUG20Q4" "DRUG21Q1" "DRUG21Q2" "DRUG21Q3" "DRUG21Q4" "DRUG22Q1" "DRUG22Q2" "DRUG22Q3" "DRUG22Q4" "DRUG23Q1" "DRUG23Q2" "DRUG23Q3" "DRUG23Q4" )
+
+# Temporary files for version A and B
+temp_file_a="${base_dir}/temp_a.txt"
+temp_file_b="${base_dir}/temp_b.txt"
+
+# Ensure temporary files are empty
+> "$temp_file_a"
+> "$temp_file_b"
+
+process_file() {
+    thefilename="${base_dir}/${1}.txt"
+    version_indicator="${1}"
+    # Determine version based on filename and use the first character as the version indicator
+    if [[ " ${version_a_prefixes[*]} " =~ " $version_indicator " ]]; then
+        # Version A
+        sed 's/\r$//' "${thefilename}" | sed '1 s/$/ filename/' | sed "2,\$ s|\$| ${thefilename}|" >> "$temp_file_a"
+    else
+        # Version B and beyond
+        sed 's/\r$//' "${thefilename}" | sed '1d' | sed "1,\$ s|\$| ${thefilename}|" >> "$temp_file_b"
+    fi
+}
+
+# Process Version A files
+for prefix in "${version_a_prefixes[@]}"; do
+    process_file "$prefix"
+done
+
+# Process Version B files
+for prefix in "${version_b_prefixes[@]}"; do
+    process_file "$prefix"
+done
+
+# Move temporary files to final version-specific files
+mv "$temp_file_a" "${base_dir}/all_version_A_drug_data_with_filename.txt"
+mv "$temp_file_b" "${base_dir}/all_version_B_drug_data_with_filename.txt"

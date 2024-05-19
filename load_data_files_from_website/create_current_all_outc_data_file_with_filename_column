@@ -1,0 +1,62 @@
+#!/bin/sh
+##########################################################################
+# Create combined outcome files with the filename appended as the last column
+# and output into version A and version B files separately.
+#
+# LTS Computing LLC
+##########################################################################
+
+# Base directory for files, adjust as necessary
+base_dir="ascii"
+
+# Define an array of file prefixes to process
+file_prefixes=(
+  "outc12q4"
+  "OUTC13Q1" "OUTC13Q2" "OUTC13Q3" "OUTC13Q4"
+  "OUTC14Q1" "OUTC14Q2" "OUTC14Q3" "OUTC14Q4"
+  "OUTC15Q1" "OUTC15Q2" "OUTC15Q3" "OUTC15Q4"
+  "OUTC16Q1" "OUTC16Q2" "OUTC16Q3" "OUTC16Q4"
+  "OUTC17Q1" "OUTC17Q2" "OUTC17Q3" "OUTC17Q4"
+  "OUTC18Q1" "OUTC18Q2" "OUTC18Q3" "OUTC18Q4"
+  "OUTC19Q1" "OUTC19Q2" "OUTC19Q3" "OUTC19Q4"
+  "OUTC20Q1" "OUTC20Q2" "OUTC20Q3" "OUTC20Q4"
+  "OUTC21Q1" "OUTC21Q2" "OUTC21Q3" "OUTC21Q4"
+  "OUTC22Q1" "OUTC22Q2" "OUTC22Q3" "OUTC22Q4"
+  "OUTC23Q1" "OUTC23Q2" "OUTC23Q3" "OUTC23Q4"
+)
+
+# Temporary files for version A and B
+temp_file_a="${base_dir}/temp_a.txt"
+temp_file_b="${base_dir}/temp_b.txt"
+
+# Ensure temporary files are empty
+> "$temp_file_a"
+> "$temp_file_b"
+
+# Function to process each file
+process_file() {
+    prefix=$1
+    filename="${base_dir}/${prefix}.txt"
+    if [[ "$prefix" < "OUTC14Q3" ]]; then
+        # Version A processing
+        if [[ "$prefix" == "outc12q4" ]]; then
+            # For the first file of version A, add a header for the filename column
+            sed 's/\r$//' "$filename" | sed '1 s/$/ filename/' | sed "2,\$ s|$| $filename|" >> "$temp_file_a"
+        else
+            # For other version A files, append the filename without modifying the header
+            sed 's/\r$//' "$filename" | sed '1d' | sed "1,\$ s|$| $filename|" >> "$temp_file_a"
+        fi
+    else
+        # Version B processing, all files omit the original header and append the filename
+        sed 's/\r$//' "$filename" | sed '1d' | sed "1,\$ s|$| $filename|" >> "$temp_file_b"
+    fi
+}
+
+# Process each file
+for prefix in "${file_prefixes[@]}"; do
+    process_file "$prefix"
+done
+
+# Rename temporary files to final version-specific files
+mv "$temp_file_a" "${base_dir}/all_version_A_outc_data_with_filename.txt"
+mv "$temp_file_b" "${base_dir}/all_version_B_outc_data_with_filename.txt"

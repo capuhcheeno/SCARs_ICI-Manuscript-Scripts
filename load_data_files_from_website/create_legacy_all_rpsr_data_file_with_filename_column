@@ -1,0 +1,26 @@
+#!/bin/sh
+##########################################################################
+# create the combined legacy reporting source files with the filename appended as the last column
+#
+# LTS Computing LLC
+##########################################################################
+
+# process the first file - including adding "filename" column name to the header line at the start of the file
+f="ascii/RPSR04Q1.TXT"
+thefilenamenosuffix=$(basename "$f" .TXT)
+# remove windows carriage return, fix bad data records with embedded \n, add on the "filename" column name to the header line and add the filename as the last column on each line
+# output to the all data file
+sed 's/\r//g' "$f" | sed "1 s|$|\$FILENAME|" | sed "2,\$ s|$|$f|" > all_rpsr_legacy_data_with_filename.txt
+
+# process the other files and concatenate to the all data file
+FILES="
+ascii/RPSR04Q2.TXT  ascii/RPSR04Q3.TXT  ascii/RPSR04Q4.TXT  ascii/RPSR05Q1.TXT  ascii/RPSR05Q2.TXT  ascii/RPSR05Q3.TXT  ascii/RPSR05Q4.TXT  ascii/RPSR06Q1.TXT  ascii/RPSR06Q2.TXT  ascii/RPSR06Q3.TXT  ascii/RPSR06Q4.TXT  ascii/RPSR07Q1.TXT  ascii/RPSR07Q2.TXT
+ascii/RPSR07Q3.TXT  ascii/RPSR07Q4.TXT  ascii/RPSR08Q1.TXT  ascii/RPSR08Q2.TXT  ascii/RPSR08Q3.TXT  ascii/RPSR08Q4.TXT  ascii/RPSR09Q1.TXT  ascii/RPSR09Q2.TXT  ascii/RPSR09Q3.TXT  ascii/RPSR09Q4.TXT  ascii/RPSR10Q1.TXT  ascii/RPSR10Q2.TXT  ascii/RPSR10Q3.TXT  ascii/RPSR10Q4.TXT
+ascii/RPSR11Q1.TXT  ascii/RPSR11Q2.TXT  ascii/RPSR11Q3.TXT  ascii/RPSR11Q4.TXT  ascii/RPSR12Q1.TXT  ascii/RPSR12Q2.TXT  ascii/RPSR12Q3.TXT
+"
+for f in $FILES
+do
+        thefilenamenosuffix=$(basename "$f" .TXT)
+        # remove windows carriage return,fix bad data records with embedded \n, remove the header line and add the filename as the last column on each line
+        sed 's/\r//g' "$f" | sed '1d' | sed "s|$|$f|" >> all_rpsr_legacy_data_with_filename.txt
+done

@@ -1,0 +1,62 @@
+#!/bin/sh
+##########################################################################
+# Create combined indication files with the filename appended as the last column
+# and output into version A and version B files separately.
+#
+# LTS Computing LLC
+##########################################################################
+
+# Define the base directory where the files are located
+base_dir="ascii"
+
+# List of all indication file prefixes to process
+file_prefixes=(
+  "indi12q4"
+  "INDI13Q1" "INDI13Q2" "INDI13Q3" "INDI13Q4"
+  "INDI14Q1" "INDI14Q2" "INDI14Q3" "INDI14Q4"
+  "INDI15Q1" "INDI15Q2" "INDI15Q3" "INDI15Q4"
+  "INDI16Q1" "INDI16Q2" "INDI16Q3" "INDI16Q4"
+  "INDI17Q1" "INDI17Q2" "INDI17Q3" "INDI17Q4"
+  "INDI18Q1" "INDI18Q2" "INDI18Q3" "INDI18Q4"
+  "INDI19Q1" "INDI19Q2" "INDI19Q3" "INDI19Q4"
+  "INDI20Q1" "INDI20Q2" "INDI20Q3" "INDI20Q4"
+  "INDI21Q1" "INDI21Q2" "INDI21Q3" "INDI21Q4"
+  "INDI22Q1" "INDI22Q2" "INDI22Q3" "INDI22Q4"
+  "INDI23Q1" "INDI23Q2" "INDI23Q3" "INDI23Q4"
+)
+
+# Temporary files for version A and B
+temp_file_a="${base_dir}/temp_a.txt"
+temp_file_b="${base_dir}/temp_b.txt"
+
+# Ensure temporary files are empty
+> "$temp_file_a"
+> "$temp_file_b"
+
+# Function to process each file
+process_file() {
+    thefilenamenoprefix=$1
+    thefilename="${base_dir}/${thefilenamenoprefix}.txt"
+    # Determine if the file belongs to version A or B
+    if [[ "${thefilenamenoprefix}" < "INDI14Q3" ]]; then
+        # Version A
+        if [[ "${thefilenamenoprefix}" == "indi12q4" ]]; then
+            # Add header for the first file of version A
+            sed 's/\r$//' "${thefilename}" | sed '1 s/$/ filename/' | sed "2,\$ s|$| ${thefilename}|" >> "$temp_file_a"
+        else
+            sed 's/\r$//' "${thefilename}" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$temp_file_a"
+        fi
+    else
+        # Version B and beyond
+        sed 's/\r$//' "${thefilename}" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$temp_file_b"
+    fi
+}
+
+# Loop through each file prefix and process it
+for prefix in "${file_prefixes[@]}"; do
+    process_file "$prefix"
+done
+
+# Rename temporary files to final version-specific files
+mv "$temp_file_a" "${base_dir}/all_version_A_indi_data_with_filename.txt"
+mv "$temp_file_b" "${base_dir}/all_version_B_indi_data_with_filename.txt"

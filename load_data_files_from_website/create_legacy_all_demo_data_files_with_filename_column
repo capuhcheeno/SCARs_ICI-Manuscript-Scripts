@@ -1,0 +1,55 @@
+#!/bin/sh
+##########################################################################
+# create the combined legacy demographic files with the filename appended as the last column
+# NOTE the demographic file formats are in two versions
+# We will call the file format before 2005 Q3 version A and everything from 2005 Q3 onwards, version B
+#
+# LTS Computing LLC
+##########################################################################
+
+# Function to process files
+process_file() {
+    local file_path=$1
+    local output_file=$2
+    local is_first_file=$3
+    local file_name=$(basename "$file_path" .TXT)
+    
+    if [ "$is_first_file" -eq 1 ]; then
+        # Process the first file differently to include the header
+        sed 's/\r$//' "$file_path" | sed 'N;s/\n\$/$/' | sed "1 s/$/\$FILENAME/" | sed "2,\$ s/\$/$file_name/" > "$output_file"
+    else
+        # Process subsequent files by removing the header and appending the filename
+        sed 's/\r$//' "$file_path" | sed 'N;s/\n\$/$/' | sed '1d' | sed "s/\$/$file_name/" >> "$output_file"
+    fi
+}
+
+# Initialize variables
+output_A="all_version_A_demo_legacy_data_with_filename.txt"
+output_B="all_version_B_demo_legacy_data_with_filename.txt"
+first_A_file="ascii/DEMO04Q1.TXT"
+first_B_file="ascii/DEMO05Q3.TXT"
+
+# Process first A file
+process_file "$first_A_file" "$output_A" 1
+
+# Process remaining A files
+for f in ascii/DEMO04Q2.TXT ascii/DEMO04Q3.TXT ascii/DEMO04Q4.TXT ascii/DEMO05Q1.TXT ascii/DEMO05Q2.TXT ascii/DEMO05Q3.TXT; do
+    process_file "$f" "$output_A" 0
+done
+
+# Process first B file
+process_file "$first_B_file" "$output_B" 1
+
+# Process remaining B files
+for f in ascii/DEMO05Q4.TXT ascii/DEMO06Q1.TXT ascii/DEMO06Q2.TXT ascii/DEMO06Q3.TXT ascii/DEMO06Q4.TXT \
+         ascii/DEMO07Q1.TXT ascii/DEMO07Q2.TXT ascii/DEMO07Q3.TXT ascii/DEMO07Q4.TXT \
+         ascii/DEMO08Q1.TXT ascii/DEMO08Q2.TXT ascii/DEMO08Q3.TXT ascii/DEMO08Q4.TXT \
+         ascii/DEMO09Q1.TXT ascii/DEMO09Q2.TXT ascii/DEMO09Q3.TXT ascii/DEMO09Q4.TXT \
+         ascii/DEMO10Q1.TXT ascii/DEMO10Q2.TXT ascii/DEMO10Q3.TXT ascii/DEMO10Q4.TXT \
+         ascii/DEMO11Q1.TXT ascii/DEMO11Q2.TXT ascii/DEMO11Q3.TXT ascii/DEMO11Q4.TXT \
+         ascii/DEMO12Q1.TXT ascii/DEMO12Q2.TXT ascii/DEMO12Q3.TXT; do
+    process_file "$f" "$output_B" 0
+done
+
+# Fix problem data record for all_version_B_demo_legacy_data_with_filename.txt
+sed -i 's

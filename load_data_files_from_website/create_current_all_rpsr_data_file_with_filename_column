@@ -1,0 +1,54 @@
+#!/bin/sh
+##########################################################################
+# Create the combined RPSR files with the filename appended as the last column
+# and output into version A and version B files separately.
+#
+# LTS Computing LLC
+##########################################################################
+
+# Define the base directory for files, adjust as needed
+base_dir="ascii"
+
+# Output files for versions A and B
+output_file_a="${base_dir}/all_version_A_rpsr_data_with_filename.txt"
+output_file_b="${base_dir}/all_version_B_rpsr_data_with_filename.txt"
+
+# Make sure output files start empty
+> "$output_file_a"
+> "$output_file_b"
+
+# Define file prefixes in an array for easier management
+file_prefixes=(
+    "rpsr12q4"
+    "RPSR13Q1" "RPSR13Q2" "RPSR13Q3" "RPSR13Q4"
+    "RPSR14Q1" "RPSR14Q2" "RPSR14Q3" "RPSR14Q4"
+    "RPSR15Q1" "RPSR15Q2" "RPSR15Q3" "RPSR15Q4"
+    "RPSR16Q1" "RPSR16Q2" "RPSR16Q3" "RPSR16Q4"
+    "RPSR17Q1" "RPSR17Q2" "RPSR17Q3" "RPSR17Q4"
+    "RPSR18Q1" "RPSR18Q2" "RPSR18Q3" "RPSR18Q4"
+    "RPSR19Q1" "RPSR19Q2" "RPSR19Q3" "RPSR19Q4"
+    "RPSR20Q1" "RPSR20Q2" "RPSR20Q3" "RPSR20Q4"
+    "RPSR21Q1" "RPSR21Q2" "RPSR21Q3" "RPSR21Q4"
+    "RPSR22Q1" "RPSR22Q2" "RPSR22Q3" "RPSR22Q4"
+    "RPSR23Q1" "RPSR23Q2" "RPSR23Q3" "RPSR23Q4"
+)
+
+# Process each file
+for prefix in "${file_prefixes[@]}"; do
+    thefilename="${base_dir}/${prefix}.txt"
+    # Determine the output file based on the prefix
+    if [[ "$prefix" < "RPSR14Q3" ]]; then
+        # Version A processing
+        if [[ "$prefix" == "rpsr12q4" ]]; then
+            # Add filename header for the first file of version A
+            sed 's/\r$//' "$thefilename" | sed '1 s/$/ filename/' | sed "2,\$ s|$| ${thefilename}|" >> "$output_file_a"
+        else
+            # Append filename without header modification for subsequent version A files
+            sed 's/\r$//' "$thefilename" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$output_file_a"
+        fi
+    else
+        # Version B processing
+        # Append filename without header modification for all version B files
+        sed 's/\r$//' "$thefilename" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$output_file_b"
+    fi
+done

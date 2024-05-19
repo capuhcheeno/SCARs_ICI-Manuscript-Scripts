@@ -1,0 +1,26 @@
+#!/bin/sh
+##########################################################################
+# create the combined legacy drug files with the filename appended as the last column
+#
+# LTS Computing LLC
+##########################################################################
+
+# process the first file - including adding "filename" column name to the header line at the start of the file
+f="ascii/DRUG04Q1.TXT"
+thefilenamenosuffix=$(basename $f .TXT)
+requirednumberoffields="13"
+# remove control-H (ascii 08) and windows line feed chars, fix bad data records with embedded \n, add on the "filename" column name to the header line and add the filename as the last column on each line
+# output to the all data file
+sed 's|[\x08\r]||g' $f | awk -F '$' -v numfields=$requirednumberoffields '(NR == 1) {print;next} (NF >= numfields) {print;next} (NF < numfields) {printf("%s",$0)}' | awk -F '$' -v numfields=$requirednumberoffields '(NF <= numfields) {print;next} (NF > numfields) {for (i=1; i<numfields; i++) printf("%s$",$i); printf("\n"); for (i=numfields; i<=NF; i++) {if (i<NF) {printf("%s$",$i) } else {printf("%s",$i)}}{if (i<NF) {printf("%s$",$i) } else {printf("%s",$i)}}; printf("\n")}' | sed '1s|$|FILENAME|' | sed "2,\$ s|$|$f|" > all_drug_legacy_data_with_filename.txt
+
+# process the other files and concatenate to the all data file
+FILES="
+ascii/DRUG04Q2.TXT  ascii/DRUG04Q3.TXT  ascii/DRUG04Q4.TXT  ascii/DRUG05Q1.TXT  ascii/DRUG05Q2.TXT  ascii/DRUG05Q3.TXT  ascii/DRUG05Q4.TXT  ascii/DRUG06Q1.TXT  ascii/DRUG06Q2.TXT  ascii/DRUG06Q3.TXT  ascii/DRUG06Q4.TXT  ascii/DRUG07Q1.TXT  ascii/DRUG07Q2.TXT
+ascii/DRUG07Q3.TXT  ascii/DRUG07Q4.TXT  ascii/DRUG08Q1.TXT  ascii/DRUG08Q2.TXT  ascii/DRUG08Q3.TXT  ascii/DRUG08Q4.TXT  ascii/DRUG09Q1.TXT  ascii/DRUG09Q2.TXT  ascii/DRUG09Q3.TXT  ascii/DRUG09Q4.TXT  ascii/DRUG10Q1.TXT  ascii/DRUG10Q2.TXT  ascii/DRUG10Q3.TXT  ascii/DRUG10Q4.TXT
+ascii/DRUG11Q1.TXT  ascii/DRUG11Q2.TXT  ascii/DRUG11Q3.TXT  ascii/DRUG11Q4.TXT  ascii/DRUG12Q1.TXT  ascii/DRUG12Q2.TXT  ascii/DRUG12Q3.TXT
+"
+for f in $FILES
+do
+    thefilenamenosuffix=$(basename $f .TXT)
+    # remove control-H (ascii 08) and windows line feed chars, fix bad data records with embedded \n, remove the header line and add the filename as the last column on each line
+    sed 's|[\x08\r]||g' $f | sed '1d' | awk -F '$' -v numfields=$requirednumberoffields '(NR == 1) {print;next} (NF >= numfields) {print;next} (NF < numfields) {printf("%s",$0)}' | awk -F '$' -v numfields=$requirednumberoffields '(NF <= numfields) {print;next} (NF > numfields) {for (i=1; i<numfields; i++) printf("%s$",$i); printf("\n"); for (i=numfields; i<=NF; i++) {if (i<NF) {printf("%s$",$i) } else {printf("%s",$i)}}; printf("\n")}' |

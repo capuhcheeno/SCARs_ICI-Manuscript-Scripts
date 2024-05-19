@@ -1,0 +1,54 @@
+#!/bin/sh
+##########################################################################
+# Create combined therapy files with the filename appended as the last column
+# and output into version A and version B files separately.
+#
+# LTS Computing LLC
+##########################################################################
+
+# Define base directory for files, adjust if needed
+base_dir="ascii"
+
+# Output files for versions A and B
+output_file_a="${base_dir}/all_version_A_ther_data_with_filename.txt"
+output_file_b="${base_dir}/all_version_B_ther_data_with_filename.txt"
+
+# Ensure the output files are empty to start
+> "$output_file_a"
+> "$output_file_b"
+
+# Define file prefixes in an array for better management
+file_prefixes=(
+    "ther12q4"
+    "THER13Q1" "THER13Q2" "THER13Q3" "THER13Q4"
+    "THER14Q1" "THER14Q2" "THER14Q3" "THER14Q4"
+    "THER15Q1" "THER15Q2" "THER15Q3" "THER15Q4"
+    "THER16Q1" "THER16Q2" "THER16Q3" "THER16Q4"
+    "THER17Q1" "THER17Q2" "THER17Q3" "THER17Q4"
+    "THER18Q1" "THER18Q2" "THER18Q3" "THER18Q4"
+    "THER19Q1" "THER19Q2" "THER19Q3" "THER19Q4"
+    "THER20Q1" "THER20Q2" "THER20Q3" "THER20Q4"
+    "THER21Q1" "THER21Q2" "THER21Q3" "THER21Q4"
+    "THER22Q1" "THER22Q2" "THER22Q3" "THER22Q4"
+    "THER23Q1" "THER23Q2" "THER23Q3" "THER23Q4"
+)
+
+# Loop through each file prefix
+for prefix in "${file_prefixes[@]}"; do
+    thefilename="${base_dir}/${prefix}.txt"
+    # Determine version and output file dynamically
+    if [[ "$prefix" < "THER14Q3" ]]; then
+        output_file="$output_file_a"
+    else
+        output_file="$output_file_b"
+    fi
+    
+    # Process file and append to the appropriate version output file
+    if [[ "$prefix" == "ther12q4" ]]; then
+        # Add filename header for the first file of version A
+        sed 's/\r$//' "$thefilename" | sed '1 s/$/ filename/' | sed "2,\$ s|$| ${thefilename}|" >> "$output_file"
+    else
+        # Append filename without header modification for other files
+        sed 's/\r$//' "$thefilename" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$output_file"
+    fi
+done
