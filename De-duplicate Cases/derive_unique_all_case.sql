@@ -1,24 +1,3 @@
--- Transform the LAERS legacy demo data into the same format as the FAERS current data so we can combine demographic data across both databases and run logic to remove duplicate cases across them both
--- There is no real LAERS case version so we default to '0' to ensure that LAERS data will sort before FAERS data case version (FAERS case version is always populated and never less than '1')
--- There is no real LAERS primaryid but we generate it from CASE and case version
--- We translate LAERS country names to FAERS 2 char country codes with a join to the country_code table
---
--- We perform single imputation of missing 'key' demographic fields for multiple reports within the same case producing a new table demo_with_imputed_keys.
---
--- We followed the single imputation process in the book "Data Mining Applications in Engineering and Medicine" 
---		by Elisabetta Poluzzi1, Emanuel Raschi1, Carlo Piccinni1 and Fabrizio De Ponti1
---		ISBN 978-953-51-0720-0: 
---		See Chapter 12: Data Mining Techniques in Pharmacovigilance: Analysis of the Publicly Accessible FDA Adverse Event Reporting System (AERS)  
--- 		we use the same demographic key fields:  age, event_dt, sex, reporter_country.
--- 
--- The 'key' demographic fields are required in later processing to remove duplicate cases.
--- 
--- We will only impute single missing case demo key values for a case where there is at least one case record with a fully populated set of demo keys 
--- and we populate (impute) the value of a missing demo key field using the max value of the demo key field for the same case.
---
--- LTS Computing LLC
--------------------------------
-
 set search_path = faers;
 
 -- generate a table to lookup concatenated string of current drugnames by primaryid
