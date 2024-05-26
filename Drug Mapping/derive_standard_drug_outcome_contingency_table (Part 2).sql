@@ -1,55 +1,15 @@
 SET search_path TO faers;
 
--- Optimize index creation by creating the indexes only once
-DO $$
-BEGIN
-	IF NOT EXISTS (
-		SELECT 1 FROM pg_class c 
-		JOIN pg_namespace n ON n.oid = c.relnamespace 
-		WHERE c.relname = 'standard_drug_outcome_count_ix' AND n.nspname = 'faers'
-	) THEN
-		CREATE INDEX standard_drug_outcome_count_ix 
-		ON standard_drug_outcome_count(drug_concept_id, outcome_concept_id);
-	END IF;
-
-	IF NOT EXISTS (
-		SELECT 1 FROM pg_class c 
-		JOIN pg_namespace n ON n.oid = c.relnamespace 
-		WHERE c.relname = 'standard_drug_outcome_count_2_ix' AND n.nspname = 'faers'
-	) THEN
-		CREATE INDEX standard_drug_outcome_count_2_ix 
-		ON standard_drug_outcome_count(drug_concept_id);
-	END IF;
-
-	IF NOT EXISTS (
-		SELECT 1 FROM pg_class c 
-		JOIN pg_namespace n ON n.oid = c.relnamespace 
-		WHERE c.relname = 'standard_drug_outcome_count_3_ix' AND n.nspname = 'faers'
-	) THEN
-		CREATE INDEX standard_drug_outcome_count_3_ix 
-		ON standard_drug_outcome_count(outcome_concept_id);
-	END IF;
-
-	IF NOT EXISTS (
-		SELECT 1 FROM pg_class c 
-		JOIN pg_namespace n ON n.oid = c.relnamespace 
-		WHERE c.relname = 'standard_drug_outcome_count_4_ix' AND n.nspname = 'faers'
-	) THEN
-		CREATE INDEX standard_drug_outcome_count_4_ix 
-		ON standard_drug_outcome_count(drug_outcome_pair_count);
-	END IF;
-END $$;
-
--- Analyze the table for better query performance
-ANALYZE VERBOSE standard_drug_outcome_count;
-
--- Combine all counts into a single query with CTEs
+-- Drop the contingency table if it exists
 DROP TABLE IF EXISTS standard_drug_outcome_contingency_table;
+
+-- Create the contingency table with CTEs
 CREATE TABLE standard_drug_outcome_contingency_table AS
 WITH
 cte_d1 AS (
-	SELECT SUM(drug_outcome_pair_count) AS count_d1 
+	SELECT drug_concept_id, outcome_concept_id, SUM(drug_outcome_pair_count) AS count_d1 
 	FROM standard_drug_outcome_count
+	GROUP BY drug_concept_id, outcome_concept_id
 ),
 cte_ab AS (
 	SELECT
@@ -92,6 +52,7 @@ SELECT
 FROM cte_ab ab
 JOIN cte_c c 
 ON ab.drug_concept_id = c.drug_concept_id AND ab.outcome_concept_id = c.outcome_concept_id
-JOIN cte_d1 d1 ON TRUE
+JOIN cte_d1 d1 
+ON ab.drug_concept_id = d1.drug_concept_id AND ab.outcome_concept_id = d1.outcome_concept_id
 JOIN cte_d2 d2 
 ON ab.drug_concept_id = d2.drug_concept_id AND ab.outcome_concept_id = d2.outcome_concept_id;
