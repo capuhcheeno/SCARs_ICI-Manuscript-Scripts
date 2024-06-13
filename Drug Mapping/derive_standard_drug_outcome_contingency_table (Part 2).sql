@@ -1,58 +1,37 @@
-SET search_path TO faers;
+--============= On a 4+ CPU postgresql server, run the following 3 queries in 3 different postgresql sessions so they run concurrently!
+-- get count_a and count_b 
+set search_path = faers;
+drop table if exists standard_drug_outcome_count_a_count_b;
+create table standard_drug_outcome_count_a_count_b as
+select drug_concept_id, outcome_concept_id, 
+drug_outcome_pair_count as count_a, -- count of drug P and outcome R
+(
+	select sum(drug_outcome_pair_count)
+	from standard_drug_outcome_count b
+	where b.drug_concept_id = a.drug_concept_id and b.outcome_concept_id <> a.outcome_concept_id 
+) as count_b -- count of drug P and not(outcome R)
+from standard_drug_outcome_count a;
 
--- Drop the contingency table if it exists
-DROP TABLE IF EXISTS standard_drug_outcome_contingency_table;
+-- get count_c 
+set search_path = faers;
+drop table if exists standard_drug_outcome_count_c;
+create table standard_drug_outcome_count_c as
+select drug_concept_id, outcome_concept_id, 
+(
+	select sum(drug_outcome_pair_count) 
+	from standard_drug_outcome_count c
+	where c.drug_concept_id <> a.drug_concept_id and c.outcome_concept_id = a.outcome_concept_id 
+) as count_c -- count of not(drug P) and outcome R
+from standard_drug_outcome_count a; 
 
--- Create the contingency table with CTEs
-CREATE TABLE standard_drug_outcome_contingency_table AS
-WITH
-cte_d1 AS (
-	SELECT drug_concept_id, outcome_concept_id, SUM(drug_outcome_pair_count) AS count_d1 
-	FROM standard_drug_outcome_count
-	GROUP BY drug_concept_id, outcome_concept_id
-),
-cte_ab AS (
-	SELECT
-		a.drug_concept_id,
-		a.outcome_concept_id,
-		a.drug_outcome_pair_count AS count_a,
-		COALESCE(SUM(b.drug_outcome_pair_count), 0) AS count_b
-	FROM standard_drug_outcome_count a
-	LEFT JOIN standard_drug_outcome_count b
-	ON a.drug_concept_id = b.drug_concept_id AND a.outcome_concept_id <> b.outcome_concept_id
-	GROUP BY a.drug_concept_id, a.outcome_concept_id, a.drug_outcome_pair_count
-),
-cte_c AS (
-	SELECT
-		a.drug_concept_id,
-		a.outcome_concept_id,
-		COALESCE(SUM(c.drug_outcome_pair_count), 0) AS count_c
-	FROM standard_drug_outcome_count a
-	LEFT JOIN standard_drug_outcome_count c
-	ON a.outcome_concept_id = c.outcome_concept_id AND a.drug_concept_id <> c.drug_concept_id
-	GROUP BY a.drug_concept_id, a.outcome_concept_id
-),
-cte_d2 AS (
-	SELECT
-		a.drug_concept_id,
-		a.outcome_concept_id,
-		COALESCE(SUM(d2.drug_outcome_pair_count), 0) AS count_d2
-	FROM standard_drug_outcome_count a
-	LEFT JOIN standard_drug_outcome_count d2
-	ON a.drug_concept_id = d2.drug_concept_id OR a.outcome_concept_id = d2.outcome_concept_id
-	GROUP BY a.drug_concept_id, a.outcome_concept_id
-)
-SELECT
-	ab.drug_concept_id,
-	ab.outcome_concept_id,
-	ab.count_a,
-	ab.count_b,
-	c.count_c,
-	(d1.count_d1 - d2.count_d2) AS count_d
-FROM cte_ab ab
-JOIN cte_c c 
-ON ab.drug_concept_id = c.drug_concept_id AND ab.outcome_concept_id = c.outcome_concept_id
-JOIN cte_d1 d1 
-ON ab.drug_concept_id = d1.drug_concept_id AND ab.outcome_concept_id = d1.outcome_concept_id
-JOIN cte_d2 d2 
-ON ab.drug_concept_id = d2.drug_concept_id AND ab.outcome_concept_id = d2.outcome_concept_id;
+-- get count d2 
+set search_path = faers;
+drop table if exists standard_drug_outcome_count_d2;
+create table standard_drug_outcome_count_d2 as
+select drug_concept_id, outcome_concept_id, 
+(
+	select sum(drug_outcome_pair_count)
+	from standard_drug_outcome_count d2
+	where (d2.drug_concept_id = a.drug_concept_id) or (d2.outcome_concept_id = a.outcome_concept_id)
+) as count_d2 -- count of all cases where drug P or outcome R 
+from standard_drug_outcome_count a;
