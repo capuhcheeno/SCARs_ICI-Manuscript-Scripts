@@ -10,7 +10,7 @@ f="ascii/THER04Q1.TXT"
 thefilenamenosuffix=$(basename $f .TXT)
 # remove windows carriage return, fix bad data records with embedded \n, add on the "filename" column name to the header line and add the filename as the last column on each line
 # output to the all data file
-sed 's/\r//g' $f | sed '1,1 s/$/\$FILENAME/' | sed "2,$ s/$/$f/" > all_ther_legacy_data_with_filename.txt
+sed 's/\r//g' $f | sed '1,1 s|$|$FILENAME|' | sed "2,$ s|$|$f|" > all_ther_legacy_data_with_filename.txt
 
 # process the other files and concatenate to the all data file
 FILES="
@@ -21,6 +21,6 @@ ascii/THER11Q1.TXT  ascii/THER11Q2.TXT  ascii/THER11Q3.TXT  ascii/THER11Q4.TXT  
 for f in $FILES
 do
         thefilenamenosuffix=$(basename $f .TXT)
-        # remove windows carriage return,fix bad data records with embedded \n, remove the header line and add the filename as the last column on each line
-        sed 's/\r//g' $f | sed '1,1d' | sed "1,$ s/$/$f/" >> all_ther_legacy_data_with_filename.txt
+        # remove windows carriage return, fix bad data records with embedded \n, remove the header line and add the filename as the last column on each line
+        sed 's/\r//g' $f | sed '1,1d' | sed "1,$ s|$|$f|" >> all_ther_legacy_data_with_filename.txt
 done
