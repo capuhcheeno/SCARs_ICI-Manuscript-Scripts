@@ -1,10 +1,3 @@
---######################################################
---# Create legacy demo staging tables DDL and
---# Load legacy FAERS data files into the demo_legacy table
---#
---# LTS Computing LLC
---######################################################
-
 set search_path = faers;
 
 drop table if exists demo_legacy_staging_version_a;
@@ -32,11 +25,12 @@ OCCP_COD varchar,
 DEATH_DT varchar,
 TO_MFR varchar,
 CONFID varchar,
+REPORTER_COUNTRY varchar,
 FILENAME varchar
 );
 truncate demo_legacy_staging_version_a;
 
-COPY demo_legacy_staging_version_a FROM 'C:\Users\Public\all_version_A_demo_legacy_data_with_filename.txt' WITH DELIMITER E'	' CSV HEADER QUOTE E'\b' ;
+COPY demo_legacy_staging_version_a FROM 'D:\Current and Legacy Files\Legacy\all_version_A_demo_legacy_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from demo_legacy_staging_version_a order by 1 limit 10;
 
 drop table if exists demo_legacy_staging_version_b;
@@ -69,7 +63,7 @@ FILENAME varchar
 );
 truncate demo_legacy_staging_version_b;
 
-COPY demo_legacy_staging_version_b FROM 'C:\Users\Public\all_version_B_demo_legacy_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY demo_legacy_staging_version_b FROM 'D:\Current and Legacy Files\Legacy\all_version_B_demo_legacy_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from demo_legacy_staging_version_b order by 1 ;
 
 drop table if exists demo_legacy ;
