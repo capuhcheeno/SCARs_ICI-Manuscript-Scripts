@@ -1,9 +1,30 @@
+------------------------------
+-- map all unique case drug drugnames to rxnorm Vocabulary concept_ids
+--
+-- we will include non-standard and standard codes so we pick up brand names as well as ingredients etc
+-- and roll-up to standard codes when we produce the statistics in a later process.
+--
+-- we map using the following precedence order.
+--
+-- regex drug name mapping
+-- active ingredient drug name mapping (only current FAERS data has active ingredient)
+-- nda drug_name mapping
+-- manual usagi drug name mapping
+--
+-- Note. We map all drug roles including concomitant drugs
+--
+-- LTS COMPUTING LLC
+------------------------------
+
+-- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
+-- we will then drop it at the end of this script
 set search_path = cdmv5;
 drop index if exists vocab_concept_name_ix;
 create index vocab_concept_name_ix on cdmv5.concept(vocabulary_id, standard_concept, upper(concept_name), concept_id);
 analyze verbose cdmv5.concept;
 
-RAISE NOTICE 'Step 1 completed: Index created on cdmv5.concept table';
+-- Step 1 completed: Index created on cdmv5.concept table
+DO $$ BEGIN RAISE NOTICE 'Step 1 completed: Index created on cdmv5.concept table'; END $$;
 
 set search_path = faers;
 
@@ -24,20 +45,23 @@ from drug_legacy a
 inner join unique_all_case b on a.isr = b.isr
 where b.isr is not null;
 
-RAISE NOTICE 'Step 2 completed: Mapping table drug_regex_mapping created';
+-- Step 2 completed: Mapping table drug_regex_mapping created
+DO $$ BEGIN RAISE NOTICE 'Step 2 completed: Mapping table drug_regex_mapping created'; END $$;
 
 -- create an index on the mapping table to improve performance
 drop index if exists drug_name_clean_ix;
 create index drug_name_clean_ix on drug_regex_mapping(drug_name_clean);
 
-RAISE NOTICE 'Step 3 completed: Index created on drug_regex_mapping table';
+-- Step 3 completed: Index created on drug_regex_mapping table
+DO $$ BEGIN RAISE NOTICE 'Step 3 completed: Index created on drug_regex_mapping table'; END $$;
 
 -- remove unwanted keywords and characters in one step
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, '(TABLETS?|CAPSULES?|(\y\d*\.*\d*\ *(MG|MILLIGRAMS?|MILLILITERS?))|\((HCL|HYDROCHLORIDE)\)|FORMULATION|GENERIC|NOS|BLINDED|UNKNOWN|UNK|\(\y(UNKNOWN|UNK)\)|\(\d+\)|[\*\^\$\?\'"”]|\\|\/| +\)|\ +$|^ +| +\)', '', 'gi')
 where concept_id is null;
 
-RAISE NOTICE 'Step 4 completed: Unwanted keywords and characters removed from drug_name_clean';
+-- Step 4 completed: Unwanted keywords and characters removed from drug_name_clean
+DO $$ BEGIN RAISE NOTICE 'Step 4 completed: Unwanted keywords and characters removed from drug_name_clean'; END $$;
 
 -- find exact mapping for cleaned-up drug name
 update drug_regex_mapping a
@@ -46,7 +70,8 @@ from cdmv5.concept b
 where b.vocabulary_id = 'RxNorm' and upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
-RAISE NOTICE 'Step 5 completed: Exact mapping for cleaned-up drug name found';
+-- Step 5 completed: Exact mapping for cleaned-up drug name found
+DO $$ BEGIN RAISE NOTICE 'Step 5 completed: Exact mapping for cleaned-up drug name found'; END $$;
 
 -- Lookup active ingredient from EU drug name
 update drug_regex_mapping a
@@ -55,7 +80,8 @@ from eu_drug_name_active_ingredient_mapping b
 where upper(a.drug_name_clean) = upper(b.brand_name)
 and a.concept_id is null;
 
-RAISE NOTICE 'Step 6 completed: Active ingredient looked up from EU drug name';
+-- Step 6 completed: Active ingredient looked up from EU drug name
+DO $$ BEGIN RAISE NOTICE 'Step 6 completed: Active ingredient looked up from EU drug name'; END $$;
 
 -- find exact mapping for active ingredient
 update drug_regex_mapping a
@@ -64,7 +90,8 @@ from cdmv5.concept b
 where b.vocabulary_id = 'RxNorm' and upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
-RAISE NOTICE 'Step 7 completed: Exact mapping for active ingredient found';
+-- Step 7 completed: Exact mapping for active ingredient found
+DO $$ BEGIN RAISE NOTICE 'Step 7 completed: Exact mapping for active ingredient found'; END $$;
 
 -- create tables for multi-ingredient and single-ingredient drug names
 drop table if exists rxnorm_mapping_multi_ingredient_list;
@@ -95,7 +122,8 @@ from (
 where word not in ('') and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y'
 group by drug_name_original;
 
-RAISE NOTICE 'Step 8 completed: Tables for multi-ingredient and single-ingredient drug names created';
+-- Step 8 completed: Tables for multi-ingredient and single-ingredient drug names created
+DO $$ BEGIN RAISE NOTICE 'Step 8 completed: Tables for multi-ingredient and single-ingredient drug names created'; END $$;
 
 -- map multi-ingredient drug names
 update drug_regex_mapping_words c
@@ -108,7 +136,8 @@ from (
 ) b
 where c.drug_name_original = b.drug_name_original and c.concept_id is null;
 
-RAISE NOTICE 'Step 9 completed: Multi-ingredient drug names mapped';
+-- Step 9 completed: Multi-ingredient drug names mapped
+DO $$ BEGIN RAISE NOTICE 'Step 9 completed: Multi-ingredient drug names mapped'; END $$;
 
 -- Similar optimization steps for single-ingredient and brand name drug mappings
 
@@ -128,12 +157,14 @@ from (
 	where b.isr is not null
 ) aa;
 
-RAISE NOTICE 'Step 10 completed: Combined drug mapping table created';
+-- Step 10 completed: Combined drug mapping table created
+DO $$ BEGIN RAISE NOTICE 'Step 10 completed: Combined drug mapping table created'; END $$;
 
 drop index if exists combined_drug_mapping_ix;
 create index combined_drug_mapping_ix on combined_drug_mapping(upper(drug_name_original));
 
-RAISE NOTICE 'Step 11 completed: Index created on combined_drug_mapping table';
+-- Step 11 completed: Index created on combined_drug_mapping table
+DO $$ BEGIN RAISE NOTICE 'Step 11 completed: Index created on combined_drug_mapping table'; END $$;
 
 -- update combined_drug_mapping using different mappings in a single step
 update combined_drug_mapping a
@@ -147,7 +178,8 @@ left join drug_usagi_mapping e on upper(a.drug_name_original) = upper(e.drug_nam
 where upper(a.drug_name_original) = upper(b.drug_name_original)
 and a.concept_id is null;
 
-RAISE NOTICE 'Step 12 completed: Combined drug mapping updated using various mappings';
+-- Step 12 completed: Combined drug mapping updated using various mappings
+DO $$ BEGIN RAISE NOTICE 'Step 12 completed: Combined drug mapping updated using various mappings'; END $$;
 
 -- update unknown drugs where drug name starts with UNKNOWN, OTHER, or UNSPECIFIED in one step
 update combined_drug_mapping 
@@ -155,9 +187,11 @@ set update_method = 'unknown drug'
 where upper(drug_name_original) ~* '^(UNKNOWN|OTHER|UNSPECIFIED).*' 
 and update_method is null;
 
-RAISE NOTICE 'Step 13 completed: Unknown drugs updated';
+-- Step 13 completed: Unknown drugs updated
+DO $$ BEGIN RAISE NOTICE 'Step 13 completed: Unknown drugs updated'; END $$;
 
 -- drop the temporary index
 drop index if exists vocab_concept_name_ix;
 
-RAISE NOTICE 'Step 14 completed: Temporary index dropped';
+-- Step 14 completed: Temporary index dropped
+DO $$ BEGIN RAISE NOTICE 'Step 14 completed: Temporary index dropped'; END $$;
