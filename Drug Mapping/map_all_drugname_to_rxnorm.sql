@@ -1,3 +1,11 @@
+INFO:  analyzing "cdmv5.concept"
+INFO:  "concept": scanned 30000 of 133316 pages, containing 1389045 live rows and 0 dead rows; 30000 rows in sample, 6172731 estimated total rows
+NOTICE:  table "drug_regex_mapping" does not exist, skipping
+NOTICE:  index "drug_name_clean_ix" does not exist, skipping
+ERROR:  invalid regular expression: quantifier operand invalid 
+
+SQL state: 2201B
+
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
 -- we will then drop it at the end of this script
 set search_path = cdmv5;
@@ -152,9 +160,7 @@ and a.concept_id is null;
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, ' +$', '', 'gi')
 where concept_id is null;
-"""
-
-sql_script_part2 = """
+	
 -- find exact mapping
 UPDATE drug_regex_mapping a
 SET update_method = 'regex remove trailing spaces' , concept_id = CAST(b.concept_id AS integer)
