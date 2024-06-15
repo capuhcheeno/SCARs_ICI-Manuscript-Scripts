@@ -1,3 +1,6 @@
+NOTICE:  identifier "]', '', 'gi')
+where concept_id is null;
+
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
 -- we will then drop it at the end of this script
 set search_path = cdmv5;
