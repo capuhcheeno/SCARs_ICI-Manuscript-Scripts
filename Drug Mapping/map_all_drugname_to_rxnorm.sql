@@ -1,11 +1,3 @@
-INFO:  analyzing "cdmv5.concept"
-INFO:  "concept": scanned 30000 of 133316 pages, containing 1389045 live rows and 0 dead rows; 30000 rows in sample, 6172731 estimated total rows
-NOTICE:  table "drug_regex_mapping" does not exist, skipping
-NOTICE:  index "drug_name_clean_ix" does not exist, skipping
-ERROR:  invalid regular expression: quantifier operand invalid 
-
-SQL state: 2201B
-
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
 -- we will then drop it at the end of this script
 set search_path = cdmv5;
@@ -41,33 +33,33 @@ create index drug_name_clean_ix on drug_regex_mapping(drug_name_clean);
 
 -- remove the word tablet or "(tablet)" or the plural forms from drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\\W|^)\\(TABLETS?\\)|TABLETS?(\\W|$)', '\\1\\2', 'gi') 
+set drug_name_clean = regexp_replace(drug_name_clean, '(\\W|^)\\(TABLETS?\\)|TABLETS?(\\W|$)', '\\1', 'gi') 
 where concept_id is null
-and drug_name_clean ~*  '.*TABLET.*';
+and drug_name_clean ~*  'TABLET';
 
 -- remove the word capsule or (capsule) or the plural forms from drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\\W|^)\\(CAPSULES?\\)|CAPSULES?(\\W|$)', '\\1\\2', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '(\\W|^)\\(CAPSULES?\\)|CAPSULES?(\\W|$)', '\\1', 'gi')
 where concept_id is null
-and drug_name_clean ~*  '.*CAPSULE.*';
+and drug_name_clean ~*  'CAPSULE';
 
 -- remove the drug strength in MG or MG/MG or MG\\MG or MG / MG and their plural forms
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\\(*(\\y\\d*\\.*\\d*\\ *MG\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|ML)*\\ *\\,*\\+*\\ *\\y)\\)*', '\\3', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\b\\d*\\.?\\d+ *MG(\\/\\d*\\.?\\d+ *(M2|ML)?)?\\b', '', 'gi')
 where concept_id is null
-and drug_name_clean ~*  '\\(*(\\y\\d*\\.*\\d*\\ *MG\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|ML)*\\ *\\,*\\+*\\ *\\y)\\)*';
+and drug_name_clean ~*  '\\d*\\.?\\d+ *MG';
 
 -- remove the drug strength in MILLIGRAMS or MILLIGRAMS/MILLILITERS or MILLIGRAMS\\MILLIGRAM and their plural forms
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\\(*(\\y\\d*\\.*\\d*\\ *MILLIGRAMS?\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|MILLILITERS?)*\\ *\\,*\\+*\\ *\\y)\\)*', '\\3', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\b\\d*\\.?\\d+ *MILLIGRAMS?(\\/\\d*\\.?\\d+ *(M2|MILLILITERS?)?)?\\b', '', 'gi')
 where concept_id is null
-and drug_name_clean ~*  '\\(*(\\y\\d*\\.*\\d*\\ *MILLIGRAMS?\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|MILLILITERS?)*\\ *\\,*\\+*\\ *\\y)\\)*';
+and drug_name_clean ~*  '\\d*\\.?\\d+ *MILLIGRAMS?';
 
 -- remove HYDROCHLORIDE and HCL
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(\\y\\ *(HCL|HYDROCHLORIDE)\\y)', '\\3', 'gi') 
+set drug_name_clean = regexp_replace(drug_name_clean, '\\b(HCL|HYDROCHLORIDE)\\b', '', 'gi') 
 where concept_id is null
-and drug_name_clean ~*  '\\(*(\\y\\ *(HCL|HYDROCHLORIDE)\\ *\\y)\\)*';
+and drug_name_clean ~*  '\\b(HCL|HYDROCHLORIDE)\\b';
 
 -- find exact mapping for drug name after we have removed the above keywords
 UPDATE drug_regex_mapping a
@@ -79,9 +71,9 @@ AND a.concept_id IS NULL;
 
 -- remove FORMULATION, GENERIC, NOS
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\\(\\y(FORMULATION|GENERIC|NOS)\\y\\)|\\y(FORMULATION|GENERIC|NOS)\\y', '\\3', 'gi')  
+set drug_name_clean = regexp_replace(drug_name_clean, '\\b(FORMULATION|GENERIC|NOS)\\b', '', 'gi')  
 where concept_id is null
-and drug_name_clean ~*  '\\y(FORMULATION|GENERIC|NOS)\\y';
+and drug_name_clean ~*  '\\b(FORMULATION|GENERIC|NOS)\\b';
 
 -- lookup active ingredient from EU drug name
 UPDATE drug_regex_mapping a
@@ -92,7 +84,7 @@ AND a.concept_id is null;
 
 -- find exact mapping for active ingredient
 UPDATE drug_regex_mapping a
-SET update_method = 'regex EU drug name to active ingredient' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex EU drug name to active ingredient', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -108,7 +100,7 @@ and a.drug_name_clean ~*  '.* \\((.*)\\)';
 
 -- find exact mapping for active ingredient
 UPDATE drug_regex_mapping a
-SET update_method = 'regex EU drug name in parentheses to active ingredient' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex EU drug name in parentheses to active ingredient', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -116,7 +108,7 @@ and a.concept_id is null;
 
 -- lookup RxNorm concept name using words from last set of parentheses in the drug name (typically this is the ingredient name(s) for a branded drug
 UPDATE drug_regex_mapping a
-SET update_method = 'regex ingredient name in parentheses' , concept_id = CAST(b.concept_id AS integer), drug_name_clean = upper(b.concept_name)
+SET update_method = 'regex ingredient name in parentheses', concept_id = CAST(b.concept_id AS integer), drug_name_clean = upper(b.concept_name)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = regexp_replace(a.drug_name_clean, '.* \\((.*)\\)', '\\1', 'gi')
@@ -125,7 +117,7 @@ and drug_name_clean ~*  '.* \\((.*)\\)';
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex upper' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex upper', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean;
@@ -137,20 +129,20 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex trailing space or period chars' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex trailing space or period chars', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- remove multiple occurrences of white space '
+-- remove multiple occurrences of white space
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, '(\\S) +', '\\1 ', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove multiple white space' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove multiple white space', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -160,10 +152,10 @@ and a.concept_id is null;
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, ' +$', '', 'gi')
 where concept_id is null;
-	
+
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove trailing spaces' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove trailing spaces', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -176,33 +168,33 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove leading spaces' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove leading spaces', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- remove single quotes and double quotes'
+-- remove single quotes and double quotes
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '[''""]', '', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '[\'"]', '', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove single quotes' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove single quotes', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- remove '^*$?' chars
+-- remove ^*$? chars
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, '[\\*\\^\\$\\?]', '', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove ^*$? punctuation chars' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove ^*$? punctuation chars', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -215,7 +207,7 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex change forward slash to back slash' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex change forward slash to back slash', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -228,7 +220,7 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove spaces before closing parenthesis' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove spaces before closing parenthesis', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -236,13 +228,13 @@ and a.concept_id is null;
 
 -- remove UNKNOWN or UNK except at start of drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\\((\\ \\yUNKNOWN|UNK\\y)\\)|\\(\\y(UNKNOWN|UNK)\\y\\)|\\y(UNKNOWN|UNK)\\y', '', 'gi')  
+set drug_name_clean = regexp_replace(drug_name_clean, '\\b(UNKNOWN|UNK)\\b', '', 'gi')  
 where concept_id is null
-and drug_name_clean ~*  '.+\\y(UNKNOWN|UNK)\\y.+$';
+and drug_name_clean ~*  '\\b(UNKNOWN|UNK)\\b';
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove (unknown)' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove (unknown)', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -250,22 +242,22 @@ and a.concept_id is null;
 
 -- remove BLINDED
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, ' *blinded *', '', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\bBLINDED\\b', '', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove blinded' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove blinded', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- remove \\nnnnn\\
-update drug_regex_mapping a
-SET drug_name_clean = regexp_replace(drug_name_clean, '\\/\\d+\\/\\ *', '', 'gi') 
-where concept_id is null and 
-drug_name_original ~* '.*\\/\\d+\\/.*';
+-- remove /nnnnn/
+update drug_regex_mapping
+set drug_name_clean = regexp_replace(drug_name_clean, '\\/\\d+\\/', '', 'gi')
+where concept_id is null
+and drug_name_original ~* '.*\\/\\d+\\/.*';
 
 -- remove trailing spaces
 update drug_regex_mapping
@@ -274,23 +266,23 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove /nnnnn/' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex remove /nnnnn/', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
 -- map vitamins where only brand name or generic description is provided in drug name field
-update drug_regex_mapping a
+update drug_regex_mapping
 set drug_name_clean = 'MULTIVITAMIN PREPARATION'
 where drug_name_clean like '%VITAMIN%' and drug_name_clean not like '%VITAMIN A%' and drug_name_clean not like '%VITAMIN B%'
 and drug_name_clean not like '%VITAMIN C%' and drug_name_clean not like '%VITAMIN K%' and drug_name_clean not like '%VITAMIN D%' 
 and drug_name_clean not like '%VITAMIN E%'
-and a.concept_id is null;
+and concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex vitamins' , concept_id = CAST(b.concept_id AS integer)
+SET update_method = 'regex vitamins', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -306,7 +298,7 @@ select distinct *
 from (
 select drug_name_original, concept_name, concept_id, update_method, unnest(word_list::text[]) as word
 from (
-select drug_name_original, concept_name, concept_id, update_method, regexp_split_to_array(upper(drug_name_original), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+select drug_name_original, concept_name, concept_id, update_method, regexp_split_to_array(upper(drug_name_original), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 from (
 	select distinct drugname as drug_name_original, cast(null as varchar) as concept_name, cast(null as integer) as concept_id, null as update_method
 	from drug a
@@ -322,12 +314,10 @@ order by drug_name_original desc
 ) bb
 ) cc 
 where word NOT IN ('','SYRUP','HCL','HYDROCHLORIDE', 'ACETIC','SODIUM','CALCIUM','SULPHATE','MONOHYDRATE') 
-and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1);
-
-------=====
 
 -- create a target mapping table of multi ingredient drug names from the RxNorm Vocabulary with each ingredient word concatenated alphabetically into a space separated string 
 drop table if exists rxnorm_mapping_multi_ingredient_list;
@@ -337,7 +327,7 @@ from (
 	select concept_id, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select concept_id,  concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select upper(concept_name) as concept_name, concept_id
 				from cdmv5.concept b
@@ -349,17 +339,16 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-	and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+	and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 	group by concept_id, concept_name
 ) dd
 group by ingredient_list;
-
 
 -- create a source multi-ingredient drug mapping table by extracting the multi-ingredient drug names with each ingredient word concatenated alphabetically into a space separated string
 drop table if exists drug_mapping_multi_ingredient_list;
@@ -369,7 +358,7 @@ from (
 	select concept_id, drug_name_original, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select distinct concept_id,  drug_name_original, concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select distinct drugname as drug_name_original, cast(null as varchar) as concept_name, cast(null as integer) as concept_id, null as update_method
 				from drug a
@@ -385,31 +374,30 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word  in (	select * 
 			from (
-				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+')) as word
+				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+')) as word
 				from  cdmv5.concept b
 				where b.vocabulary_id = 'RxNorm'
 				and b.concept_class_id in ('Clinical Drug Form')
-				and b.concept_name like '%\/%' 
+				and b.concept_name like '%/%' 
 			) aa 
 			where word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-			and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+			and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 			order by 1
 			)
 	group by concept_id, drug_name_original, concept_name
 ) dd
 group by drug_name_original, ingredient_list;
 
-
 -- map drug names containing multiple ingredient names to clinical drug form
 update drug_regex_mapping_words c
-SET update_method = 'multiple ingredient match' , concept_name = b.concept_name, concept_id = b.concept_id 
+SET update_method = 'multiple ingredient match', concept_name = b.concept_name, concept_id = b.concept_id 
 from (
 select distinct a.drug_name_original, max(upper(b1.concept_name)) as concept_name, max(b1.concept_id) as concept_id 
 from drug_mapping_multi_ingredient_list a
@@ -420,9 +408,6 @@ group by a.drug_name_original
 where c.drug_name_original = b.drug_name_original
 and c.concept_id is null;
 
-
---*************
-
 -- create a target mapping table of single ingredient drug names from RxNorm Vocabulary with each ingredient word concatenated alphabetically into a space separated string 
 drop table if exists rxnorm_mapping_single_ingredient_list;
 create table rxnorm_mapping_single_ingredient_list as
@@ -431,7 +416,7 @@ from (
 	select concept_id, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select concept_id,  concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select upper(concept_name) as concept_name, concept_id
 				from cdmv5.concept b
@@ -442,17 +427,16 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-	and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+	and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 	group by concept_id, concept_name
 ) dd
 group by ingredient_list;
-
 
 -- create a source single-ingredient drug mapping table by extracting the single-ingredient drug names with each single ingredient word concatenated alphabetically into a space separated string
 drop table if exists drug_mapping_single_ingredient_list;
@@ -462,7 +446,7 @@ from (
 	select concept_id, drug_name_original, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select distinct concept_id,  drug_name_original, concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select distinct drugname as drug_name_original, cast(null as varchar) as concept_name, cast(null as integer) as concept_id, null as update_method
 				from drug a
@@ -478,30 +462,29 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word  in (	select * 
 			from (
-				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+')) as word
+				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+')) as word
 				from  cdmv5.concept b
 				where b.vocabulary_id = 'RxNorm'
 				and b.concept_class_id in ('Ingredient')
 			) aa 
 			where word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-			and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+			and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 			order by 1
 			)
 	group by concept_id, drug_name_original, concept_name
 ) dd
 group by drug_name_original, ingredient_list;
 
-
 -- map drug names containing single ingredient names to ingredient concepts
 update drug_regex_mapping_words c
-SET update_method = 'single ingredient match' , concept_name = b.concept_name, concept_id = b.concept_id 
+SET update_method = 'single ingredient match', concept_name = b.concept_name, concept_id = b.concept_id 
 from (
 select distinct a.drug_name_original, max(upper(b1.concept_name)) as concept_name, max(b1.concept_id) as concept_id 
 from drug_mapping_single_ingredient_list a
@@ -513,8 +496,6 @@ where c.drug_name_original = b.drug_name_original
 and c.update_method is null and b.concept_name not in ('VITAMIN A','SODIUM','HYDROCHLORIDE','HCL','CALCIUM','COLD CREAM','VITAMIN B 12','MALEATE','TARTRATE','MESYLATE','MONOHYDRATE','SUCCINATE','CORN SYRUP','FACTOR X','PROTEIN S')
 and c.update_method is null;
 
---*************
-
 -- create a target mapping table of brand names in RxNorm Vocabulary with each brand name word concatenated alphabetically into a space separated string 
 drop table if exists rxnorm_mapping_brand_name_list;
 create table rxnorm_mapping_brand_name_list as
@@ -523,7 +504,7 @@ from (
 	select concept_id, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select concept_id,  concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, concept_name, regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select upper(concept_name) as concept_name, concept_id
 				from cdmv5.concept b
@@ -534,13 +515,13 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-	and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+	and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 	group by concept_id, concept_name
 ) dd
 group by ingredient_list;
@@ -553,7 +534,7 @@ from (
 	select concept_id, drug_name_original, concept_name, string_agg(word, ' ' order by word) as ingredient_list  from (
 		select distinct concept_id,  drug_name_original, concept_name, unnest(word_list::text[]) as word
 		from (
-			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+') as word_list
+			select concept_id, drug_name_original, concept_name, regexp_split_to_array(upper(drug_name_original), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+') as word_list
 			from (
 				select distinct drugname as drug_name_original, cast(null as varchar) as concept_name, cast(null as integer) as concept_id, null as update_method
 				from drug a
@@ -569,20 +550,20 @@ from (
 		) bb
 	) cc
 	where word not in ('')
-	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\.\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+'))
+	and word not in (select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+'))
 			from  cdmv5.concept b
 			where b.vocabulary_id = 'RxNorm'
 			and b.concept_class_id = 'Dose Form' order by 1)
 	and word  in (	select * 
 			from (
-				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\ \,\(\)\{\}\\\\/\^\%\~\`\@\#\$\;\:\"\'\?\<\>\&\^\!\*\_\+\=]+')) as word
+				select distinct unnest(regexp_split_to_array(upper(concept_name), E'[\\ \\,,\\(,\\),\\{,\\},\\\\,/,\\^,%,\\.,~,`,@,#,$,;,\\:,\",\\',\\?,<,>,\\&,\\^,!,*,_,+,=]+')) as word
 				from  cdmv5.concept b
 				where b.vocabulary_id = 'RxNorm'
 				and b.concept_class_id in ('Brand Name')
 			) aa 
 			where word not in ('','-', ' ', 'A', 'AND', 'EX', '10A','11A','12F','18C','19F','99M','G','G1','G2',
 			'G3','G4','H','I','IN','JELLY','LEAF','O','OF','OR','P','S','T','V','WITH','X','Y','Z') 
-			and word !~ '^\d+$|\y\d+\-\d+\y|\y\d+\.\d+\y' 
+			and word !~ '\\y\\d+\\y|\\y\\d+-\\d+\\y|\\y\\d+\\.\\d+\\y' 
 			order by 1
 			)
 	group by concept_id, drug_name_original, concept_name
@@ -591,7 +572,7 @@ group by drug_name_original, ingredient_list;
 
 -- map drug names containing brand names to brand name concepts
 update drug_regex_mapping_words c
-SET update_method = 'brand name match' , concept_name = b.concept_name, concept_id = b.concept_id 
+SET update_method = 'brand name match', concept_name = b.concept_name, concept_id = b.concept_id 
 from (
 select distinct a.drug_name_original, max(upper(b1.concept_name)) as concept_name, max(b1.concept_id) as concept_id 
 from drug_mapping_brand_name_list a
@@ -606,22 +587,16 @@ and c.update_method is null and b.concept_name not in ('G.B.H. SHAMPOO', 'A.P.L.
 	'NASAL RELIEF', 'MEDICATED BLUE', 'FE 50', 'BIOTENE TOOTHPASTE', 'VITAMIN A','SODIUM','HYDROCHLORIDE','HCL','CALCIUM', 'LONG LASTING NASAL', 'TRIPLE PASTE', 'K + POTASSIUM', 'NASAL DECONGESTANT SYRUP',
 	'COLD CREAM','VITAMIN B 12','MALEATE','TARTRATE','MESYLATE','MONOHYDRATE','SUCCINATE','CORN SYRUP','FACTOR X','PROTEIN S');
 
---*************
-
 -- update the original drug regex mapping table with the brand names, multiple and single ingredient drug names 
 update drug_regex_mapping c
-SET update_method = b.update_method , drug_name_clean = b.concept_name, concept_id = b.concept_id 
+SET update_method = b.update_method, drug_name_clean = b.concept_name, concept_id = b.concept_id 
 from (
 select distinct drug_name_original, concept_name, concept_id, update_method from drug_regex_mapping_words where concept_id is not null
 ) b
 where c.drug_name_original = b.drug_name_original
 and c.update_method is null;
 
-
---------------------------------------------------
-
 -- create active ingredient mapping table -- note only FAERS current data has active ingredient 
-
 drop table if exists drug_ai_mapping;
 create table drug_ai_mapping as
 select distinct drugname as drug_name_original, prod_ai, cast(null as integer) as concept_id, null as update_method
@@ -637,8 +612,6 @@ SET update_method = 'drug active ingredients', concept_id = b.concept_id::intege
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.prod_ai;
-
------------------------------------------------
 
 -- create NDA (new drug application) number mapping table
 -- (NDA num maps to ingredient(s) in the FDA orange book reference dataset)
@@ -680,8 +653,6 @@ AND (
     (upper(a.drug_name_original) LIKE '%' || upper(nda_ingredient.ingredient) || '%') OR
     (upper(a.drug_name_original) LIKE '%' || upper(nda_ingredient.trade_name) || '%')
 );
-
------------------------------------------------
 
 -- combine all the different types of mapping into a single combined drug mapping table across legacy LAERS data and current FAERS data
 
