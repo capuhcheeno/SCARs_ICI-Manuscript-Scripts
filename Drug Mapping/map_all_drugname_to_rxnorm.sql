@@ -81,11 +81,11 @@ and drug_name_clean ~*  '\(*(\y\ *(HCL|HYDROCHLORIDE)\ *\y)\)*';
 
 -- find exact mapping for drug name after we have removed the above keywords
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove keywords' , concept_id = b.concept_id
+SET update_method = 'regex remove keywords', concept_id = b.concept_id
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
-and a.concept_id is null;
+AND a.concept_id IS NULL;
 
 -- remove FORMULATION, GENERIC, NOS
 update drug_regex_mapping
@@ -643,7 +643,7 @@ create index prod_ai_ix on drug_ai_mapping(prod_ai);
 
 -- find exact mapping using the active ingredient provided in the drug table
 UPDATE drug_ai_mapping a
-SET update_method = 'drug active ingredients', concept_id = cast(b.concept_id as integer)
+SET update_method = 'drug active ingredients', concept_id = b.concept_id::integer
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.prod_ai;
@@ -680,15 +680,15 @@ create index nda_num_ix on drug_nda_mapping(nda_num);
 -- find exact mapping using the drug table nda_num, NDA to ingredient lookup
 -- compare nda ingredient name and trade name to improve specificity
 UPDATE drug_nda_mapping a
-SET update_method = 'drug nda_num ingredients', nda_ingredient = nda_ingredient.ingredient, concept_id = cast(b.concept_id as integer)
+SET update_method = 'drug nda_num ingredients', nda_ingredient = nda_ingredient.ingredient, concept_id = b.concept_id::integer
 FROM cdmv5.concept b
-inner join nda_ingredient
-on upper(b.concept_name) = nda_ingredient.ingredient
+INNER JOIN nda_ingredient
+ON upper(b.concept_name) = nda_ingredient.ingredient
 WHERE b.vocabulary_id = 'RxNorm'
 AND nda_ingredient.appl_no = a.nda_num
-and (
-    (upper(a.drug_name_original) like '%' || upper(nda_ingredient.ingredient) || '%') or
-    (upper(a.drug_name_original) like '%' || upper(nda_ingredient.trade_name) || '%')
+AND (
+    (upper(a.drug_name_original) LIKE '%' || upper(nda_ingredient.ingredient) || '%') OR
+    (upper(a.drug_name_original) LIKE '%' || upper(nda_ingredient.trade_name) || '%')
 );
 
 -----------------------------------------------
@@ -715,36 +715,36 @@ create index combined_drug_mapping_ix on combined_drug_mapping(upper(drug_name_o
 
 -- update using drug_regex_mapping 
 UPDATE combined_drug_mapping a
-SET update_method = b.update_method, lookup_value = drug_name_clean, concept_id = cast(b.concept_id as integer)
+SET update_method = b.update_method, lookup_value = drug_name_clean, concept_id = b.concept_id::integer
 FROM drug_regex_mapping b
 WHERE upper(a.drug_name_original) = upper(b.drug_name_original)
-and a.concept_id is null
-and b.concept_id is not null;
+AND a.concept_id IS NULL
+AND b.concept_id IS NOT NULL;
 
 -- update using drug_ai_mapping
 UPDATE combined_drug_mapping a
-SET update_method = b.update_method, lookup_value = prod_ai, concept_id = cast(b.concept_id as integer)
+SET update_method = b.update_method, lookup_value = prod_ai, concept_id = b.concept_id::integer
 FROM drug_ai_mapping b
 WHERE upper(a.drug_name_original) = upper(b.drug_name_original)
-and a.concept_id is null
-and b.concept_id is not null;
+AND a.concept_id IS NULL
+AND b.concept_id IS NOT NULL;
 
 -- update using drug_nda_mapping
 UPDATE combined_drug_mapping a
-SET update_method = b.update_method, lookup_value = nda_ingredient, concept_id = cast(b.concept_id as integer)
+SET update_method = b.update_method, lookup_value = nda_ingredient, concept_id = b.concept_id::integer
 FROM drug_nda_mapping b
 WHERE upper(a.drug_name_original) = upper(b.drug_name_original)
-and a.concept_id is null
-and b.concept_id is not null;
+AND a.concept_id IS NULL
+AND b.concept_id IS NOT NULL;
 
 -- update using drug_usagi_mapping
 -- manually curated drug mappings
 UPDATE combined_drug_mapping a
-SET update_method = b.update_method, lookup_value = b.concept_name, concept_id = cast(b.concept_id as integer)
+SET update_method = b.update_method, lookup_value = b.concept_name, concept_id = b.concept_id::integer
 FROM drug_usagi_mapping b
 WHERE upper(a.drug_name_original) = upper(b.drug_name_original)
-and a.concept_id is null
-and b.concept_id is not null;
+AND a.concept_id IS NULL
+AND b.concept_id IS NOT NULL;
 
 -- update unknown drugs where drug name starts with UNKNOWN
 update combined_drug_mapping 
