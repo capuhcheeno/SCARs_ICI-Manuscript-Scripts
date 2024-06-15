@@ -76,7 +76,7 @@ and drug_name_clean ~*  '\(*(\y\ *(HCL|HYDROCHLORIDE)\ *\y)\)*';
 
 -- find exact mapping for drug name after we have removed the above keywords
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove keywords', concept_id = b.concept_id::integer
+SET update_method = 'regex remove keywords', concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
