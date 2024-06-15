@@ -1,19 +1,14 @@
-------------------------------
--- map all unique case drug drugnames to rxnorm Vocabulary concept_ids
---
--- we will include non-standard and standard codes so we pick up brand names as well as ingredients etc
--- and roll-up to standard codes when we produce the statistics in a later process.
---
--- we map using the following precedence order.
---
--- regex drug name mapping
--- active ingredient drug name mapping (only current FAERS data has active ingredient)
--- nda drug_name mapping
--- manual usagi drug name mapping
---
--- Note. We map all drug roles including concomitant drugs
---
--- LTS COMPUTING LLC
+INFO:  analyzing "cdmv5.concept"
+INFO:  "concept": scanned 30000 of 133316 pages, containing 1388849 live rows and 0 dead rows; 30000 rows in sample, 6171860 estimated total rows
+NOTICE:  table "drug_regex_mapping" does not exist, skipping
+NOTICE:  index "drug_name_clean_ix" does not exist, skipping
+ERROR:  column "concept_id" is of type integer but expression is of type text
+LINE 84: ...te_method = 'regex remove keywords', concept_id = b.concept_...
+                                                              ^
+HINT:  You will need to rewrite or cast the expression. 
+
+SQL state: 42804
+Character: 4035
 ------------------------------
 
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
