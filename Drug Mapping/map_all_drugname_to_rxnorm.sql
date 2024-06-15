@@ -1,15 +1,15 @@
 INFO:  analyzing "cdmv5.concept"
-INFO:  "concept": scanned 30000 of 133316 pages, containing 1388849 live rows and 0 dead rows; 30000 rows in sample, 6171860 estimated total rows
+INFO:  "concept": scanned 30000 of 133316 pages, containing 1391277 live rows and 0 dead rows; 30000 rows in sample, 6182649 estimated total rows
 NOTICE:  table "drug_regex_mapping" does not exist, skipping
 NOTICE:  index "drug_name_clean_ix" does not exist, skipping
 ERROR:  column "concept_id" is of type integer but expression is of type text
-LINE 84: ...te_method = 'regex remove keywords', concept_id = b.concept_...
+LINE 87: ...EU drug name to active ingredient' , concept_id = b.concept_...
                                                               ^
 HINT:  You will need to rewrite or cast the expression. 
 
 SQL state: 42804
-Character: 4035
-------------------------------
+Character: 4290
+
 
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
 -- we will then drop it at the end of this script
