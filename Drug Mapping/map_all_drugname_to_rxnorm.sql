@@ -1,16 +1,3 @@
-INFO:  analyzing "cdmv5.concept"
-INFO:  "concept": scanned 30000 of 133316 pages, containing 1391277 live rows and 0 dead rows; 30000 rows in sample, 6182649 estimated total rows
-NOTICE:  table "drug_regex_mapping" does not exist, skipping
-NOTICE:  index "drug_name_clean_ix" does not exist, skipping
-ERROR:  column "concept_id" is of type integer but expression is of type text
-LINE 87: ...EU drug name to active ingredient' , concept_id = b.concept_...
-                                                              ^
-HINT:  You will need to rewrite or cast the expression. 
-
-SQL state: 42804
-Character: 4290
-
-
 -- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
 -- we will then drop it at the end of this script
 set search_path = cdmv5;
@@ -29,15 +16,15 @@ drop table if exists drug_regex_mapping;
 create table drug_regex_mapping as
 select distinct drug_name_original, drug_name_clean, concept_id, update_method
 from (
-	select distinct drugname as drug_name_original, upper(drugname) as drug_name_clean, cast(null as integer) as concept_id, null as update_method
-	from drug a
-	inner join unique_all_case b on a.primaryid = b.primaryid
-	where b.isr is null
-	union
-	select distinct drugname as drug_name_original, upper(drugname) as drug_name_clean, cast(null as integer) as concept_id, null as update_method
-	from drug_legacy a
-	inner join unique_all_case b on a.isr = b.isr
-	where b.isr is not null
+    select distinct drugname as drug_name_original, upper(drugname) as drug_name_clean, cast(null as integer) as concept_id, null as update_method
+    from drug a
+    inner join unique_all_case b on a.primaryid = b.primaryid
+    where b.isr is null
+    union
+    select distinct drugname as drug_name_original, upper(drugname) as drug_name_clean, cast(null as integer) as concept_id, null as update_method
+    from drug_legacy a
+    inner join unique_all_case b on a.isr = b.isr
+    where b.isr is not null
 ) aa;
 
 -- create an index on the mapping table to improve performance
@@ -46,33 +33,33 @@ create index drug_name_clean_ix on drug_regex_mapping(drug_name_clean);
 
 -- remove the word tablet or "(tablet)" or the plural forms from drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\W|^)\(TABLETS?\)|TABLETS?(\W|$)', '\1\2', 'gi') 
+set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\\W|^)\\(TABLETS?\\)|TABLETS?(\\W|$)', '\\1\\2', 'gi') 
 where concept_id is null
 and drug_name_clean ~*  '.*TABLET.*';
 
 -- remove the word capsule or (capsule) or the plural forms from drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\W|^)\(CAPSULES?\)|CAPSULES?(\W|$)', '\1\2', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '(.*)(\\W|^)\\(CAPSULES?\\)|CAPSULES?(\\W|$)', '\\1\\2', 'gi')
 where concept_id is null
 and drug_name_clean ~*  '.*CAPSULE.*';
 
--- remove the drug strength in MG or MG/MG or MG\MG or MG / MG and their plural forms
+-- remove the drug strength in MG or MG/MG or MG\\MG or MG / MG and their plural forms
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\(*(\y\d*\.*\d*\ *MG\,*\ *\/*\\*\ *\d*\.*\d*\ *(M2|ML)*\ *\,*\+*\ *\y)\)*', '\3', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\(*(\\y\\d*\\.*\\d*\\ *MG\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|ML)*\\ *\\,*\\+*\\ *\\y)\\)*', '\\3', 'gi')
 where concept_id is null
-and drug_name_clean ~*  '\(*(\y\d*\.*\d*\ *MG\,*\ *\/*\\*\ *\d*\.*\d*\ *(M2|ML)*\ *\,*\+*\ *\y)\)*';
+and drug_name_clean ~*  '\\(*(\\y\\d*\\.*\\d*\\ *MG\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|ML)*\\ *\\,*\\+*\\ *\\y)\\)*';
 
--- remove the drug strength in MILLIGRAMS or MILLIGRAMS/MILLILITERS or MILLIGRAMS\MILLIGRAM and their plural forms
+-- remove the drug strength in MILLIGRAMS or MILLIGRAMS/MILLILITERS or MILLIGRAMS\\MILLIGRAM and their plural forms
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\(*(\y\d*\.*\d*\ *MILLIGRAMS?\,*\ *\/*\\*\ *\d*\.*\d*\ *(M2|MILLILITERS?)*\ *\,*\+*\ *\y)\)*', '\3', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\(*(\\y\\d*\\.*\\d*\\ *MILLIGRAMS?\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|MILLILITERS?)*\\ *\\,*\\+*\\ *\\y)\\)*', '\\3', 'gi')
 where concept_id is null
-and drug_name_clean ~*  '\(*(\y\d*\.*\d*\ *MILLIGRAMS?\,*\ *\/*\\*\ *\d*\.*\d*\ *(M2|MILLILITERS?)*\ *\,*\+*\ *\y)\)*';
+and drug_name_clean ~*  '\\(*(\\y\\d*\\.*\\d*\\ *MILLIGRAMS?\\,*\\ *\\/\\*\\\\*\\ *\\d*\\.*\\d*\\ *(M2|MILLILITERS?)*\\ *\\,*\\+*\\ *\\y)\\)*';
 
 -- remove HYDROCHLORIDE and HCL
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(\y\ *(HCL|HYDROCHLORIDE)\y)', '\3', 'gi') 
+set drug_name_clean = regexp_replace(drug_name_clean, '(\\y\\ *(HCL|HYDROCHLORIDE)\\y)', '\\3', 'gi') 
 where concept_id is null
-and drug_name_clean ~*  '\(*(\y\ *(HCL|HYDROCHLORIDE)\ *\y)\)*';
+and drug_name_clean ~*  '\\(*(\\y\\ *(HCL|HYDROCHLORIDE)\\ *\\y)\\)*';
 
 -- find exact mapping for drug name after we have removed the above keywords
 UPDATE drug_regex_mapping a
@@ -84,9 +71,9 @@ AND a.concept_id IS NULL;
 
 -- remove FORMULATION, GENERIC, NOS
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\(\y(FORMULATION|GENERIC|NOS)\y\)|\y(FORMULATION|GENERIC|NOS)\y', '\3', 'gi')  
+set drug_name_clean = regexp_replace(drug_name_clean, '\\(\\y(FORMULATION|GENERIC|NOS)\\y\\)|\\y(FORMULATION|GENERIC|NOS)\\y', '\\3', 'gi')  
 where concept_id is null
-and drug_name_clean ~*  '\y(FORMULATION|GENERIC|NOS)\y';
+and drug_name_clean ~*  '\\y(FORMULATION|GENERIC|NOS)\\y';
 
 -- lookup active ingredient from EU drug name
 UPDATE drug_regex_mapping a
@@ -97,7 +84,7 @@ AND a.concept_id is null;
 
 -- find exact mapping for active ingredient
 UPDATE drug_regex_mapping a
-SET update_method = 'regex EU drug name to active ingredient' , concept_id = b.concept_id
+SET update_method = 'regex EU drug name to active ingredient' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -107,13 +94,13 @@ and a.concept_id is null;
 update drug_regex_mapping a
 set update_method = 'regex EU drug name in parentheses to active ingredient', drug_name_clean = upper(b.active_substance) 
 from eu_drug_name_active_ingredient_mapping b
-where upper(regexp_replace(a.drug_name_clean, '.* \((.*)\)', '\1', 'gi')) = upper(b.brand_name)
+where upper(regexp_replace(a.drug_name_clean, '.* \\((.*)\\)', '\\1', 'gi')) = upper(b.brand_name)
 and a.concept_id is null
-and a.drug_name_clean ~*  '.* \((.*)\)';
+and a.drug_name_clean ~*  '.* \\((.*)\\)';
 
 -- find exact mapping for active ingredient
 UPDATE drug_regex_mapping a
-SET update_method = 'regex EU drug name in parentheses to active ingredient' , concept_id = b.concept_id
+SET update_method = 'regex EU drug name in parentheses to active ingredient' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -121,28 +108,28 @@ and a.concept_id is null;
 
 -- lookup RxNorm concept name using words from last set of parentheses in the drug name (typically this is the ingredient name(s) for a branded drug
 UPDATE drug_regex_mapping a
-SET update_method = 'regex ingredient name in parentheses' , concept_id = b.concept_id, drug_name_clean = upper(b.concept_name)
+SET update_method = 'regex ingredient name in parentheses' , concept_id = CAST(b.concept_id AS integer), drug_name_clean = upper(b.concept_name)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
-AND upper(b.concept_name) = regexp_replace(a.drug_name_clean, '.* \((.*)\)', '\1', 'gi')
+AND upper(b.concept_name) = regexp_replace(a.drug_name_clean, '.* \\((.*)\\)', '\\1', 'gi')
 AND a.concept_id is null
-and drug_name_clean ~*  '.* \((.*)\)';
+and drug_name_clean ~*  '.* \\((.*)\\)';
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex upper' , concept_id = b.concept_id
+SET update_method = 'regex upper' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean;
 
 -- remove trailing spaces or period or , characters
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '[ \.\,]$', '', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '[ \\.\\,]$', '', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex trailing space or period chars' , concept_id = b.concept_id
+SET update_method = 'regex trailing space or period chars' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -150,12 +137,12 @@ and a.concept_id is null;
 
 -- remove multiple occurrences of white space '
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '(\S) +', '\1 ', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '(\\S) +', '\\1 ', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove multiple white space' , concept_id = b.concept_id
+SET update_method = 'regex remove multiple white space' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -165,10 +152,12 @@ and a.concept_id is null;
 update drug_regex_mapping
 set drug_name_clean = regexp_replace(drug_name_clean, ' +$', '', 'gi')
 where concept_id is null;
+"""
 
+sql_script_part2 = """
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove trailing spaces' , concept_id = b.concept_id
+SET update_method = 'regex remove trailing spaces' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -181,7 +170,7 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove leading spaces' , concept_id = b.concept_id
+SET update_method = 'regex remove leading spaces' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -194,7 +183,7 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove single quotes' , concept_id = b.concept_id
+SET update_method = 'regex remove single quotes' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -202,25 +191,25 @@ and a.concept_id is null;
 
 -- remove '^*$?' chars
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '[\*\^\$\?]', '', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '[\\*\\^\\$\\?]', '', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove ^*$? punctuation chars' , concept_id = b.concept_id
+SET update_method = 'regex remove ^*$? punctuation chars' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- change \ to / char
+-- change \\ to / char
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\\', '/', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, '\\\\', '/', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex change forward slash to back slash' , concept_id = b.concept_id
+SET update_method = 'regex change forward slash to back slash' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -228,12 +217,12 @@ and a.concept_id is null;
 
 -- remove spaces before closing parenthesis char
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, ' +\)', ')', 'gi')
+set drug_name_clean = regexp_replace(drug_name_clean, ' +\\)', ')', 'gi')
 where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove spaces before closing parenthesis' , concept_id = b.concept_id
+SET update_method = 'regex remove spaces before closing parenthesis' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -241,13 +230,13 @@ and a.concept_id is null;
 
 -- remove UNKNOWN or UNK except at start of drug name
 update drug_regex_mapping
-set drug_name_clean = regexp_replace(drug_name_clean, '\((\ \yUNKNOWN|UNK\y)\)|\(\y(UNKNOWN|UNK)\y\)|\y(UNKNOWN|UNK)\y', '', 'gi')  
+set drug_name_clean = regexp_replace(drug_name_clean, '\\((\\ \\yUNKNOWN|UNK\\y)\\)|\\(\\y(UNKNOWN|UNK)\\y\\)|\\y(UNKNOWN|UNK)\\y', '', 'gi')  
 where concept_id is null
-and drug_name_clean ~*  '.+\y(UNKNOWN|UNK)\y.+$';
+and drug_name_clean ~*  '.+\\y(UNKNOWN|UNK)\\y.+$';
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove (unknown)' , concept_id = b.concept_id
+SET update_method = 'regex remove (unknown)' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -260,17 +249,17 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove blinded' , concept_id = b.concept_id
+SET update_method = 'regex remove blinded' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
 and a.concept_id is null;
 
--- remove \nnnnn\
+-- remove \\nnnnn\\
 update drug_regex_mapping a
-SET drug_name_clean = regexp_replace(drug_name_clean, '\/\d+\/\ *', '', 'gi') 
+SET drug_name_clean = regexp_replace(drug_name_clean, '\\/\\d+\\/\\ *', '', 'gi') 
 where concept_id is null and 
-drug_name_original ~* '.*\/\d+\/.*';
+drug_name_original ~* '.*\\/\\d+\\/.*';
 
 -- remove trailing spaces
 update drug_regex_mapping
@@ -279,7 +268,7 @@ where concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex remove /nnnnn/' , concept_id = b.concept_id
+SET update_method = 'regex remove /nnnnn/' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
@@ -295,7 +284,7 @@ and a.concept_id is null;
 
 -- find exact mapping
 UPDATE drug_regex_mapping a
-SET update_method = 'regex vitamins' , concept_id = b.concept_id
+SET update_method = 'regex vitamins' , concept_id = CAST(b.concept_id AS integer)
 FROM cdmv5.concept b
 WHERE b.vocabulary_id = 'RxNorm'
 AND upper(b.concept_name) = a.drug_name_clean
