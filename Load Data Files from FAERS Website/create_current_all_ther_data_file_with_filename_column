@@ -1,7 +1,7 @@
 #!/bin/sh
 ##########################################################################
 # Create combined therapy files with the filename appended as the last column
-# and output into version A and version B files separately.
+# and output into a single file.
 #
 # LTS Computing LLC
 ##########################################################################
@@ -9,13 +9,11 @@
 # Define base directory for files, adjust if needed
 base_dir="ascii"
 
-# Output files for versions A and B
-output_file_a="${base_dir}/all_version_A_ther_data_with_filename.txt"
-output_file_b="${base_dir}/all_version_B_ther_data_with_filename.txt"
+# Output file for the combined data
+combined_file="${base_dir}/all_ther_data_with_filename.txt"
 
-# Ensure the output files are empty to start
-> "$output_file_a"
-> "$output_file_b"
+# Ensure the combined file starts empty
+> "$combined_file"
 
 # Define file prefixes in an array for better management
 file_prefixes=(
@@ -33,22 +31,25 @@ file_prefixes=(
     "THER23Q1" "THER23Q2" "THER23Q3" "THER23Q4"
 )
 
+# Function to process each file
+process_file() {
+    prefix=$1
+    filename="${base_dir}/${prefix}.txt"
+    if [[ ! -f "$filename" ]]; then
+        echo "File not found: $filename"
+        return
+    fi
+    # Add header for the first file
+    if [[ "$prefix" == "ther12q4" ]]; then
+        sed 's/\r$//' "$filename" | sed '1 s/$/ filename/' | sed "2,\$ s|$| ${filename}|" >> "$combined_file"
+    else
+        sed 's/\r$//' "$filename" | sed '1d' | sed "1,\$ s|$| ${filename}|" >> "$combined_file"
+    fi
+}
+
 # Loop through each file prefix
 for prefix in "${file_prefixes[@]}"; do
-    thefilename="${base_dir}/${prefix}.txt"
-    # Determine version and output file dynamically
-    if [[ "$prefix" < "THER14Q3" ]]; then
-        output_file="$output_file_a"
-    else
-        output_file="$output_file_b"
-    fi
-    
-    # Process file and append to the appropriate version output file
-    if [[ "$prefix" == "ther12q4" ]]; then
-        # Add filename header for the first file of version A
-        sed 's/\r$//' "$thefilename" | sed '1 s/$/ filename/' | sed "2,\$ s|$| ${thefilename}|" >> "$output_file"
-    else
-        # Append filename without header modification for other files
-        sed 's/\r$//' "$thefilename" | sed '1d' | sed "1,\$ s|$| ${thefilename}|" >> "$output_file"
-    fi
+    process_file "$prefix"
 done
+
+echo "Combined file created: ${combined_file}"
