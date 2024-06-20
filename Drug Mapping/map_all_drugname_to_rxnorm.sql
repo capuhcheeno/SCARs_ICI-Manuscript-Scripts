@@ -372,6 +372,13 @@ WHERE b.vocabulary_id = 'RxNorm'
   AND UPPER(b.concept_name) = UPPER(a.prod_ai);
 DO $$ BEGIN RAISE NOTICE 'Active ingredient mappings applied.'; END $$;
 
+-- note the following table should be created one time when the FDA orange book (NDA ingredient lookup) table is loaded
+drop table if exists nda_ingredient;
+create table nda_ingredient as
+select distinct appl_no, ingredient, trade_name
+from nda; 
+DO $$ BEGIN RAISE NOTICE 'nda_ingredient table created.'; END $$;
+
 -- Create NDA mapping table
 DROP TABLE IF EXISTS drug_nda_mapping;
 CREATE TABLE drug_nda_mapping AS
