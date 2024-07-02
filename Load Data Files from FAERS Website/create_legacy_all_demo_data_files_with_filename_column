@@ -33,7 +33,7 @@ first_B_file="ascii/DEMO05Q3.TXT"
 process_file "$first_A_file" "$output_A" 1
 
 # Process remaining A files
-for f in ascii/DEMO04Q2.TXT ascii/DEMO04Q3.TXT ascii/DEMO04Q4.TXT ascii/DEMO05Q1.TXT ascii/DEMO05Q2.TXT ascii/DEMO05Q3.TXT; do
+for f in ascii/DEMO04Q2.TXT ascii/DEMO04Q3.TXT ascii/DEMO04Q4.TXT ascii/DEMO05Q1.TXT ascii/DEMO05Q2.TXT; do
     process_file "$f" "$output_A" 0
 done
 
