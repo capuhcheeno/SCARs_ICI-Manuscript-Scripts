@@ -1,3 +1,23 @@
+------------------------------
+-- map all unique case drug drugnames to rxnorm Vocabulary concept_ids
+--
+-- we will include non-standard and standard codes so we pick up brand names as well as ingredients etc
+-- and roll-up to standard codes when we produce the statistics in a later process.
+--
+-- we map using the following precedence order.
+--
+-- regex drug name mapping
+-- active ingredient drug name mapping (only current FAERS data has active ingredient)
+-- nda drug_name mapping
+-- manual usagi drug name mapping
+--
+-- Note. We map all drug roles including concomitant drugs
+--
+-- LTS COMPUTING LLC
+------------------------------
+
+-- temporarily create an index on the cdmv5 schema concept table to improve performance of all the mapping lookups
+-- we will then drop it at the end of this script
 set search_path = cdmv5;
 drop index if exists vocab_concept_name_ix;
 create index vocab_concept_name_ix on cdmv5.concept(vocabulary_id, standard_concept, upper(concept_name), concept_id);
@@ -721,7 +741,7 @@ and b.concept_id is not null;
 -- manually curated drug mappings
 UPDATE combined_drug_mapping a
 SET  update_method = b.update_method , lookup_value = b.concept_name, concept_id = b.concept_id::integer
-FROM drug_usagi_mapping b
+FROM faers.drug_usagi_mapping b
 WHERE upper(a.drug_name_original) = upper(b.drug_name_original)
 and a.concept_id is null
 and b.concept_id is not null;
