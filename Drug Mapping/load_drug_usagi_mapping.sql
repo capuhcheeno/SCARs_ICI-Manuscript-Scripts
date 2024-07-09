@@ -1,15 +1,6 @@
-INSERT INTO faers.drug_usagi_mapping
-SELECT 
-    a.source_code_description AS drug_name_original, 
-    b.concept_name, 
-    b.concept_class_id, 
-    CAST(a.target_concept_id AS INTEGER) AS concept_id, 
-    CAST('usagi' AS TEXT) AS update_method
-FROM 
-    faers.usagi_import a
-INNER JOIN 
-    cdmv5.concept b
-ON 
-    CAST(a.target_concept_id AS INTEGER) = b.concept_id::text::integer
-WHERE
-    a.target_concept_id ~ '^[0-9]+$';
+insert into faers.drug_usagi_mapping
+select a.source_code_description as drug_name_original , 
+b.concept_name, b.concept_class_id, cast(a.target_concept_id as integer) as concept_id, cast ('usagi' as text) as update_method
+from faers.usagi_import a
+inner join cdmv5.concept b
+on cast(a.target_concept_id as integer) = b.concept_id::integer
