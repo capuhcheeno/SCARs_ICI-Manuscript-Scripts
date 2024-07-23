@@ -17,6 +17,6 @@ FILENAME varchar
 );
 truncate indi_legacy;
 
-COPY indi_legacy FROM '/home/lee/data/inbound/faers/legacy/ascii/all_indi_legacy_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY indi_legacy FROM 'D:\Legacy\all_indi_legacy_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from indi_legacy order by 1 ;
 
