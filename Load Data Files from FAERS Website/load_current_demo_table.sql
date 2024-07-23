@@ -36,7 +36,7 @@ filename varchar
 );
 truncate demo_staging_version_A;
 
-COPY demo_staging_version_A FROM '/home/ubuntu/inbound_data/faers/ascii/all_version_A_demo_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY demo_staging_version_A FROM 'D:\2004-2016\all_version_A_demo_data_with_filename' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from demo_staging_version_A order by 1;
 
 drop table if exists demo_staging_version_B;
@@ -71,7 +71,7 @@ filename varchar
 );
 truncate demo_staging_version_B;
 
-COPY demo_staging_version_B FROM '/home/ubuntu/inbound_data/faers/ascii/all_version_B_demo_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY demo_staging_version_B FROM 'D:\2004-2016\all_version_B_demo_data_with_filename' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from demo_staging_version_B order by 1;
 
 drop table if exists demo;
