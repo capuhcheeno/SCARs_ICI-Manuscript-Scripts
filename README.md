@@ -18,8 +18,8 @@
      - Download from the FDA Orange Book website (https://www.fda.gov/drugs/drug-approvals-and-databases/orange-book-data-files)
      - Execute `load_nda_table.sql`
    - Load reference tables:
-     - **Country Codes**: Execute `load_country_code_table.sql`
-     - **EU Drug Names and Ingredients**: Execute `load_eu_drug_name_active_ingredient.sql`
+     - **Country Codes**: Execute `load_country_code_table.sql` using `ISO_3166-1_country_codes.csv` file from `Reference Data Prerequisites`
+     - **EU Drug Names and Ingredients**: Execute `load_eu_drug_name_active_ingredient.sql` using `EU_registered_drugs_by_active_ingredient_utf8.txt` file from `Reference Data Prerequisites`
 
 2. **Create a schema named `cdmv5`.**
    - Load vocabulary tables:
