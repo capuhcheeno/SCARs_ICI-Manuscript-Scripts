@@ -4,6 +4,49 @@
 #
 # LTS Computing LLC
 ################################################################
+# FAERS ASCII 2024 Q4
+fileyearquarter=24q4
+wget https://fis.fda.gov/content/Exports/faers_ascii_2024q4.zip
+unzip faers_ascii_2024q4.zip
+mv FAQs.pdf "ascii/FAQs${fileyearquarter}.pdf"
+mv FAQs.doc "ascii/FAQs${fileyearquarter}.doc"
+mv Readme.pdf "ascii/Readme${fileyearquarter}.pdf"
+mv Readme.doc "ascii/Readme${fileyearquarter}.doc"
+mv ascii/ASC_NTS.pdf "ascii/ASC_NTS${fileyearquarter}.pdf"
+mv ascii/ASC_NTS.doc "ascii/ASC_NTS${fileyearquarter}.doc"
+
+# FAERS ASCII 2024 Q3
+fileyearquarter=24q3
+wget https://fis.fda.gov/content/Exports/faers_ascii_2024q3.zip
+unzip faers_ascii_2024q3.zip
+mv FAQs.pdf "ascii/FAQs${fileyearquarter}.pdf"
+mv FAQs.doc "ascii/FAQs${fileyearquarter}.doc"
+mv Readme.pdf "ascii/Readme${fileyearquarter}.pdf"
+mv Readme.doc "ascii/Readme${fileyearquarter}.doc"
+mv ascii/ASC_NTS.pdf "ascii/ASC_NTS${fileyearquarter}.pdf"
+mv ascii/ASC_NTS.doc "ascii/ASC_NTS${fileyearquarter}.doc"
+
+# FAERS ASCII 2024 Q2
+fileyearquarter=24q2
+wget https://fis.fda.gov/content/Exports/faers_ascii_2024q2.zip
+unzip faers_ascii_2024q2.zip
+mv FAQs.pdf "ascii/FAQs${fileyearquarter}.pdf"
+mv FAQs.doc "ascii/FAQs${fileyearquarter}.doc"
+mv Readme.pdf "ascii/Readme${fileyearquarter}.pdf"
+mv Readme.doc "ascii/Readme${fileyearquarter}.doc"
+mv ascii/ASC_NTS.pdf "ascii/ASC_NTS${fileyearquarter}.pdf"
+mv ascii/ASC_NTS.doc "ascii/ASC_NTS${fileyearquarter}.doc"
+
+# FAERS ASCII 2024 Q1
+fileyearquarter=24q1
+wget https://fis.fda.gov/content/Exports/faers_ascii_2024q1.zip
+unzip faers_ascii_2024q1.zip
+mv FAQs.pdf "ascii/FAQs${fileyearquarter}.pdf"
+mv FAQs.doc "ascii/FAQs${fileyearquarter}.doc"
+mv Readme.pdf "ascii/Readme${fileyearquarter}.pdf"
+mv Readme.doc "ascii/Readme${fileyearquarter}.doc"
+mv ascii/ASC_NTS.pdf "ascii/ASC_NTS${fileyearquarter}.pdf"
+mv ascii/ASC_NTS.doc "ascii/ASC_NTS${fileyearquarter}.doc"
 
 # FAERS ASCII 2023 Q4
 fileyearquarter=23q4
