@@ -4,9 +4,9 @@ from sksurv.ensemble import RandomSurvivalForest
 from sksurv.metrics import concordance_index_censored
 import itertools
 
-clean_data_SJSTEN = pd.read_csv(r"C:\Users\parkd\Downloads\clean_data_SJSTEN.csv")
-clean_data_DRESS = pd.read_csv(r"C:\Users\parkd\Downloads\clean_data_DRESS.csv")
-clean_data_AGEP = pd.read_csv(r"C:\Users\parkd\Downloads\clean_data_AGEP.csv")
+clean_data_SJSTEN = pd.read_csv(r"C:\clean_data_SJSTEN.csv")
+clean_data_DRESS = pd.read_csv(r"C:\clean_data_DRESS.csv")
+clean_data_AGEP = pd.read_csv(r"C:\clean_data_AGEP.csv")
 
 # Convert SJS-TEN to factors
 clean_data_SJSTEN["sex"] = clean_data_SJSTEN["sex"].astype("category")
