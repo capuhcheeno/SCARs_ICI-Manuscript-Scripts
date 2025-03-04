@@ -331,7 +331,7 @@ def plot_km_survival_by_concomitant(data, time_col="TTE", event_col="status", co
 
 if __name__ == "__main__":
     # === 1) Load the data ===
-    combined_file = r"C:\Users\parkd\Downloads\clean_data_scar.csv"
+    combined_file = r"C:\clean_data_scar.csv"
     combined_data = pd.read_csv(combined_file)
     combined_data["status"] = 1  # Ensure 'status' is present
 
