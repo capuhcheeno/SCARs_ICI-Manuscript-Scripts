@@ -9,7 +9,7 @@ from sksurv.metrics import concordance_index_censored
 # -------------------------------------------------------------------------------
 
 # Load the combined SCAR data
-clean_data_scar = pd.read_csv(r"C:\Users\parkd\Downloads\clean_data_SCAR.csv")
+clean_data_scar = pd.read_csv(r"C:\clean_data_SCAR.csv")
 
 # Convert relevant columns to categorical variables
 categorical_columns = ["sex", "causative_drug", "age_group", "region"]
