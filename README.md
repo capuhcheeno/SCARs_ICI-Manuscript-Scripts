@@ -112,7 +112,13 @@
    - `standardize_combined_drug_mapping.sql`
    - `derive_standard_case_outcome.sql`
 
+
 # Instructions to Analyze the FAERS Data with Random Survival Forests
+
+## System Requirements
+- Operating System: Windows
+- Python Client: PyCharm 2024.2.0.1 (with Python version 3.12)
+- GitHub Repository: https://github.com/capuhcheeno/SCARs_ICI-Manuscript-Scripts
 
 ## Parameter Search
 **Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Random Survival Forest Analysis`
