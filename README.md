@@ -3,7 +3,7 @@
 
 ## System Requirements
 - Operating System: Linux (Developed on Cygwin 3.5.3 on Windows)
-- Python Client: PyCharm
+- Python Client: PyCharm 2024.2.0.1 (with Python version 3.12)
 - Database: PostgreSQL 16.3 (with PgAdmin IV)
 - Mapping Tool: OHDSI Usagi
 - Text Editor: Notepad++
@@ -111,6 +111,23 @@
 1. Execute the following scripts:
    - `standardize_combined_drug_mapping.sql`
    - `derive_standard_case_outcome.sql`
+
+# Instructions to Analyze the FAERS Data with Random Survival Forests
+
+## Parameter Search
+**Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Random Survival Forest Analysis`
+
+### Steps:
+1. Execute the following scripts:
+   - `Individual SCARs Parameter Search.py`
+   - `All SCARs Parameter Search.py`
+
+## Kaplan Meier Survival Curves and VIMP Production
+**Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Random Survival Forest Analysis`
+
+### Steps:
+1. Execute the following scripts:
+   - `Kaplan Meier Curves and VIMPs.py`
 
 ---
 
