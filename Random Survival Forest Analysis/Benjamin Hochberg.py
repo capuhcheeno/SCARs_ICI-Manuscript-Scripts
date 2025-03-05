@@ -1,6 +1,6 @@
 from statsmodels.stats.multitest import multipletests
 
-# List of p-values
+# List of p-values (Replace the XXX with p-values extracted from the Python console after running Kaplan Meier Curves and VIMPs.py)
 p_values = [
     XXX, XXX, XXX, XXX,
     XXX, XXX, XXX, XXX,
