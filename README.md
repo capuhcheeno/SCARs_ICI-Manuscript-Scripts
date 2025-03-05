@@ -1,5 +1,5 @@
 
-# Instructions to Execute the Standardize FAERS Data
+# Instructions to Execute the Standardization of FAERS Data
 
 ## System Requirements
 - Operating System: Linux (Developed on Cygwin 3.5.3 on Windows)
