@@ -113,6 +113,20 @@
    - `derive_standard_case_outcome.sql`
 
 
+# Instructions to Analyze FAERS Data
+
+## System Requirements
+- Operating System: Windows
+- R Client: RStudio 2024.12.0 Build 467 (with R version 4.4.2)
+- GitHub Repository: https://github.com/capuhcheeno/SCARs_ICI-Manuscript-Scripts
+
+## Reference Data Preparation
+**Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Analyses of FAERS Data`
+
+### Steps:
+1. Execute XXXXXXXXXXXXXXXXXXXXXX
+
+
 # Instructions to Analyze the FAERS Data with Random Survival Forests
 
 ## System Requirements
