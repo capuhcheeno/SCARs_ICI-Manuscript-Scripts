@@ -79,7 +79,7 @@
      - `load_legacy_rpsr_table.sql`
      - `load_legacy_ther_table.sql`
 
-## Processing Steps
+## Processing Steps for Deduplication and Mapping
 1. Execute `derive_unique_all_case.sql` from `SCARs_ICI-Manuscript-Scripts/De-duplicate Cases`.
 2. Execute `map_all_drugname_to_rxnorm.py` from `SCARs_ICI-Manuscript-Scripts/Drug Mapping`.
 3. Execute `create_drug_usagi_mapping_table.sql` from `SCARs_ICI-Manuscript-Scripts/Drug Mapping`.
@@ -104,7 +104,7 @@
     -  If the above fails, execute the Python script: `loading USAGI table to USAGI_import.py`.
 14. Execute `load_drug_usagi_mapping.sql`.
 
-## Standardization and Analysis
+## Standardization and Producing Files for Analysis
 **Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Drug Mapping`
 
 ### Steps:
@@ -132,8 +132,9 @@
 **Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Random Survival Forest Analysis`
 
 ### Steps:
-1. Execute the following scripts:
-   - `Kaplan Meier Curves and VIMPs.py`
+1. Execute `Kaplan Meier Curves and VIMPs.py`
+2. Extract all p-values from the Python console and execute `Benjamin Hochberg.py`
+
 
 ---
 
