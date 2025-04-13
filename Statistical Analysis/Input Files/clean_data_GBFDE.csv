@@ -1,0 +1,6 @@
+"compositeid","sex","country","age_yr","causative_drug","reac_pt_list","drug_pt_list","TTE","age_group","region","concomitant_count"
+"pid.210393764","F","FR",35,"ceftriaxone","product prescribing error","trimethoprim;pentamidine;ceftazidime;amikacin;spiramycin",2,"[20,40)","Europe & Central Asia",5
+"pid.228698831","F","ES",96,"amoxicillin","","acetaminophen;metformin;dexketoprofen",2,"[80,100]","Europe & Central Asia",3
+"pid.229681691","M","DE",42,"hydromorphone","dehydration;hypotension;tachycardia","trimipramine;quetiapine;ibuprofen;enoxaparin;insulin glargine;moxifloxacin;vitamin d;folic acid",3,"[40,60)","Europe & Central Asia",8
+"pid.230242251","M","DE",42,"hydromorphone","dehydration;hypotension;tachycardia","trimipramine;quetiapine;ibuprofen;enoxaparin;insulin glargine;moxifloxacin;vitamin d;chlorprothixene;folic acid",3,"[40,60)","Europe & Central Asia",9
+"pid.230357802","M","DE",42,"ibuprofen","dehydration;hypotension;tachycardia;toxic epidermal necrolysis","trimipramine;quetiapine;acetaminophen;hydromorphone;allopurinol;enoxaparin;insulin glargine;prednisolone;amoxicillin;moxifloxacin;vitamin d;chlorprothixene;folic acid",4,"[40,60)","Europe & Central Asia",13
