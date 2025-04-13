@@ -1,0 +1,493 @@
+---
+title: "FAERS_TTE_Demography"
+author: "Eric Mukherjee"
+date: "2024-10-15"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE, r,results='hide'}
+library(data.table)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(RColorBrewer)
+library(patchwork)
+library(ggplot2)
+library(ggpubr)
+library(survminer)
+library(survival)
+```
+
+##INTRODUCTION
+
+Import the data into R:
+
+```{r}
+# Import drug, outcome, demographics, and ther tables
+standard_case_drug <- read_csv("sanitized_drug_data.csv")
+standard_case_outcome <- read_csv("sanitized_outcome_data.csv")
+patient_demographics <- read_csv("sanitized_demographics.csv")
+combined_ther <- read_csv("sanitized_ther.csv")
+
+#Import the drug dictionary and outcome dictionary
+#Import Updated Drug Dictionary
+drug_dictionary <- read_csv("drug_dictionary.csv")
+outcome_dictionary <- read_csv("sanitized_outcome_dictionary.csv")
+```
+
+For all analysis, we will stick with primary suspects (PS) only.
+
+```{r}
+# Filter down standard_case_drug to primary suspects only
+standard_case_drug_PS <- standard_case_drug[standard_case_drug$role_cod == "PS",]
+```
+
+Next, we can left joint combined_ther to the standard_case_drug table:
+
+```{r}
+# Perform a left join using base R, ensuring that non-matching rows get NA
+drug_exposure <- merge(standard_case_drug_PS, combined_ther, 
+                       by = c("compositeid", "drug_seq"), 
+                       all.x = TRUE)
+
+# View the result
+print(drug_exposure)
+```
+
+The patient demographics table has the start date of the given reaction. Now we can add that data to the outcome_data:
+
+```{r}
+# Perform a left join to add the demographic columns to outcome data
+# Use merge with all.x = TRUE to preserve all rows of outcome data
+updated_outcome_data <- merge(standard_case_outcome, patient_demographics, by = "compositeid", all.x = TRUE)
+
+# View the updated data to verify the join
+print(updated_outcome_data)
+```
+
+Now, the updated_outcome_data has the date of the reaction, and the drug_exposure data.table has the date of each drug exposure. We can now build a new table with the information we need:
+
+```{r}
+# Step 0: Make sure the relevant tables are formatted
+updated_outcome_data <- as.data.table(updated_outcome_data)
+standard_case_drug <- as.data.table(standard_case_drug)
+drug_exposure <- as.data.table(drug_exposure)
+
+# Step 1: Create a base table with all unique compositeid from standard_case_drug and updated_outcome_data
+all_compositeids <- unique(c(standard_case_drug$compositeid, updated_outcome_data$compositeid))
+final_table <- data.table(compositeid = all_compositeids)
+
+# Step 2: Collapse reac_pt_list in updated_outcome_data for each compositeid with case-insensitive deduplication
+outcome_data_collapsed <- updated_outcome_data[, .(
+  reac_pt_list = paste(unique(tolower(pt)), collapse = "; ")
+), by = compositeid]
+
+# Step 3: Collapse drug names in standard_case_drug for each compositeid with case-insensitive deduplication
+# Note this uses all drugs, not just PS!
+drug_list_collapsed <- standard_case_drug[, .(
+  drug_pt_list = paste(unique(tolower(drug_name)), collapse = "; ")), by = compositeid]
+
+# Step 4: Extract only the PS role (causative drug) and its start date from drug_exposure
+causative_drug_data <- drug_exposure[role_cod == "PS", .(compositeid, causative_drug = drug_name, start_dt)]
+
+# Step 5: Perform separate left joins for each data source, ensuring all compositeids are preserved
+final_table <- merge(final_table, patient_demographics, by = "compositeid", all.x = TRUE)
+final_table <- merge(final_table, causative_drug_data, by = "compositeid", all.x = TRUE)
+final_table <- merge(final_table, outcome_data_collapsed, by = "compositeid", all.x = TRUE)
+final_table <- merge(final_table, drug_list_collapsed, by = "compositeid", all.x = TRUE)
+
+# Deduplicate the final table
+final_table <- unique(final_table)
+
+# View the final table
+print(final_table)
+
+gc()  # Run garbage collection to free up memory
+```
+As a caveat - there are repeated rows with different start dates. This is likely due to how the administration is recorded. For example there's a patient who has 52 separate rows, with a vorinostat administration done repeatedly over a period of time. 
+
+##FILTERING BY SCAR
+
+Create a version that's filtered down to just DRESS:
+
+```{r}
+DRESS_IDs <- c(43053854, 37179294, 35104825)
+compositeid_DRESS <- unique(updated_outcome_data[outcome_concept_id %in% DRESS_IDs, .(compositeid)])
+final_table_DRESS_only <- final_table[compositeid %in% compositeid_DRESS$compositeid]
+```
+
+Lets do the same for SJS/TEN:
+
+```{r}
+SJSTEN_IDs <- c(36009724, 43010942, 36009754)
+compositeid_SJSTEN <- unique(updated_outcome_data[outcome_concept_id %in% SJSTEN_IDs, .(compositeid)])
+final_table_SJSTEN_only <- final_table[compositeid %in% compositeid_SJSTEN$compositeid]
+```
+
+And AGEP:
+
+```{r}
+AGEP_IDs <- c(36211150, 37179294)
+compositeid_AGEP <- unique(updated_outcome_data[outcome_concept_id %in% AGEP_IDs, .(compositeid)])
+final_table_AGEP_only <- final_table[compositeid %in% compositeid_AGEP$compositeid]
+```
+
+And GBFDE:
+
+```{r}
+GBFDE_IDs <- c(35327030)
+compositeid_GBFDE <- unique(updated_outcome_data[outcome_concept_id %in% GBFDE_IDs, .(compositeid)])
+final_table_GBFDE_only <- final_table[compositeid %in% compositeid_GBFDE$compositeid]
+```
+
+Also create one that contains all SCAR:
+
+```{r}
+SCAR_IDs <- c(43053854, 36009724, 43010942, 36009754, 36211150, 37179294, 35327030, 35104825)
+compositeid_SCAR <- unique(updated_outcome_data[outcome_concept_id %in% SCAR_IDs, .(compositeid)])
+final_table_SCAR_only <- final_table[compositeid %in% compositeid_SCAR$compositeid]
+```
+
+##ANALYZE TTE
+
+###Preparing Data
+
+For TTE analysis, we need to keep only the rows that have valid start_dt and event_dt, then calculate TTE.
+
+```{r}
+# Ensure final_table is a data.table
+final_table <- as.data.table(final_table)
+
+# Function to check if date is complete (YYYYMMDD format)
+is_full_date <- function(date) {
+  nchar(as.character(date)) == 8  # Only keep dates with 8 characters
+}
+
+# Step 1: Subset rows with complete dates
+final_table_TTE <- final_table[
+  is_full_date(start_dt) & is_full_date(event_dt)  # Filter for full dates only
+]
+
+# Step 2: Convert to Date format
+final_table_TTE[, start_dt := as.Date(as.character(start_dt), format = "%Y%m%d")]
+final_table_TTE[, event_dt := as.Date(as.character(event_dt), format = "%Y%m%d")]
+
+# Step 3: Calculate TTE (Time-to-Event in days)
+final_table_TTE[, TTE := as.numeric(event_dt - start_dt)]
+```
+
+Now subset this table by SCAR patients, for the initial analysis. And write them to disk.
+
+```{r}
+# Filter and write final tables to disk
+
+# Write SJSTEN table
+final_table_TTE_SJSTEN <- final_table_TTE[compositeid %in% compositeid_SJSTEN$compositeid]
+write.csv(final_table_TTE_SJSTEN, "final_table_TTE_SJSTEN.csv", row.names = FALSE)
+
+# Write DRESS table
+final_table_TTE_DRESS <- final_table_TTE[compositeid %in% compositeid_DRESS$compositeid]
+write.csv(final_table_TTE_DRESS, "final_table_TTE_DRESS.csv", row.names = FALSE)
+
+# Write AGEP table
+final_table_TTE_AGEP <- final_table_TTE[compositeid %in% compositeid_AGEP$compositeid]
+write.csv(final_table_TTE_AGEP, "final_table_TTE_AGEP.csv", row.names = FALSE)
+
+# Write GBFDE table
+final_table_TTE_GBFDE <- final_table_TTE[compositeid %in% compositeid_GBFDE$compositeid]
+write.csv(final_table_TTE_GBFDE, "final_table_TTE_GBFDE.csv", row.names = FALSE)
+
+# Write SCAR table
+final_table_TTE_SCAR <- final_table_TTE[compositeid %in% compositeid_SCAR$compositeid]
+write.csv(final_table_TTE_SCAR, "final_table_TTE_SCAR.csv", row.names = FALSE)
+```
+
+
+###Per SCAR TTE
+
+Now for plotting:
+
+```{r}
+# Define consistent colors for all SCAR types
+scar_colors <- setNames(brewer.pal(5, "Set1"),  # Use Set1 with 5 distinct colors
+                        c("SJS-TEN", "DRESS", "AGEP", "GBFDE", "Total SCAR"))
+
+# Function to prepare data with TTE filtering and IQR-based outlier removal
+prepare_TTE_data <- function(data, scar_name) {
+  # Remove rows with missing TTE
+  data <- data %>% filter(!is.na(TTE))
+  
+  # Step 1: Filter TTE between 0 and 180 days
+  filtered_data <- data %>% filter(TTE > 0 & TTE <= 180)
+  
+  # Step 2: Calculate IQR for further outlier removal
+  Q1 <- quantile(filtered_data$TTE, 0.25)
+  Q3 <- quantile(filtered_data$TTE, 0.75)
+  IQR <- Q3 - Q1
+  
+  # Define bounds for outlier detection
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  
+  # Step 3: Apply IQR-based outlier removal
+  filtered_data <- filtered_data %>% filter(TTE >= lower_bound & TTE <= upper_bound)
+  
+  # Add SCAR group name as a column
+  filtered_data <- filtered_data %>% mutate(SCAR = scar_name)
+  
+  ## REMOVE DUPLICATES AT THE END: Keep row with lowest TTE per compositeid
+  filtered_data <- filtered_data %>%
+    group_by(compositeid) %>%
+    slice_min(order_by = TTE, with_ties = FALSE) %>%
+    ungroup()  
+  
+  return(filtered_data)
+}
+```
+
+Use this function to prepare the data.
+
+```{r}
+# Prepare data for each SCAR group
+SJSTEN_data <- prepare_TTE_data(final_table_TTE_SJSTEN, "SJS-TEN")
+DRESS_data <- prepare_TTE_data(final_table_TTE_DRESS, "DRESS")
+AGEP_data <- prepare_TTE_data(final_table_TTE_AGEP, "AGEP")
+GBFDE_data <- prepare_TTE_data(final_table_TTE_GBFDE, "GBFDE")
+SCAR_data <- prepare_TTE_data(final_table_TTE_SCAR, "Total SCAR")
+
+# Combine all datasets into one
+combined_data <- bind_rows(SJSTEN_data, DRESS_data, AGEP_data, GBFDE_data, SCAR_data)
+
+# Generate the violin plot
+p4.1 <- ggplot(combined_data, aes(x = SCAR, y = TTE, fill = SCAR)) +
+  geom_violin(trim = TRUE, alpha = 0.7) +   # Violin plot with trimming
+  geom_boxplot(width = 0.1, outlier.shape = NA) +  # Boxplot inside violin for summary
+  
+  # Add pairwise comparisons with only significant stars and no brackets for ns
+  stat_compare_means(
+    method = "wilcox.test",  # Wilcoxon test for non-parametric data
+    comparisons = list(
+      c("SJS-TEN", "DRESS"), 
+      c("DRESS", "AGEP"), 
+      c("SJS-TEN", "AGEP"),
+      c("GBFDE", "SJS-TEN"),  
+      c("GBFDE", "DRESS")
+    ),  # GBFDE vs AGEP removed
+    label = "p.signif",  # Display only stars (***, **, *)
+    hide.ns = TRUE,      # Hide non-significant comparisons entirely
+    label.y = c(60, 65, 70, 75, 78)  # Adjust vertical positions
+  ) +
+  coord_cartesian(ylim = c(0, 80)) +  # Set maximum y-axis to 80
+  theme_minimal() +
+  labs(
+    y = "Latency (Days)", x = NULL
+  ) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),  # Rotate x-axis labels
+    legend.position = "none"  # Hide legend since SCAR groups are already labeled
+  ) +
+  scale_fill_manual(values = scar_colors)  # Use scar_colors for fill
+
+# Display the plot
+print(p4.1)
+```
+
+GBFDE only has 5 rows pass filter, so it's harder to dive into that data. For reference, it's AGEP (n = 1541), DRESS (n = 5021), SJS-TEN (n = 7230), GBFDE (n = 5), and total SCAR (n = 13633)
+
+Lets also do a TTE graph in case that looks better:
+
+```{r}
+# Create a new table
+combined_data_noscar <- bind_rows(SJSTEN_data, DRESS_data, AGEP_data, GBFDE_data)
+combined_data_noscar$SCAR <- as.factor(combined_data_noscar$SCAR)
+
+# Fit survival curve by SCAR
+fit_scar <- survfit(Surv(TTE) ~ SCAR, data = combined_data_noscar)
+
+# Generate survival plot with custom colors
+p4.1alt <- ggsurvplot(
+  fit_scar,
+  data = combined_data_noscar,
+  pval = TRUE,
+  pval.coord = c(50, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3.5,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 10,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 80),
+  title = "",
+  xlab = "",
+  ylab = "",
+  legend.title = "",
+  legend.labs = levels(combined_data_noscar$SCAR),
+  font.legend = list(size = 14, color = "black", face = "bold"),
+  palette = scar_colors  # Apply custom colors
+)
+```
+###Per Drug TTE
+
+Now we want to compare TTE for various drugs within each SCAR.
+
+```{r}
+# Function to filter, clean, and prepare data for plotting
+prepare_top_drugs_TTE <- function(data, scar_name, top_n = 5) {
+  # Remove rows with missing TTE or causative drugs
+  data <- data %>% filter(!is.na(TTE), !is.na(causative_drug))
+  
+  # Filter TTE to 0–180 days and remove outliers based on IQR
+  filtered_data <- data %>% filter(TTE > 0 & TTE <= 180)
+  Q1 <- quantile(filtered_data$TTE, 0.25)
+  Q3 <- quantile(filtered_data$TTE, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  filtered_data <- filtered_data %>% filter(TTE >= lower_bound & TTE <= upper_bound)
+  
+  # Select top 'n' causative drugs by frequency
+  top_drugs <- filtered_data %>%
+    count(causative_drug, sort = TRUE) %>%
+    top_n(top_n, n) %>%
+    pull(causative_drug)
+  
+  # Filter dataset for only top drugs
+  filtered_data <- filtered_data %>% filter(causative_drug %in% top_drugs)
+  
+  # Add SCAR group label
+  filtered_data <- filtered_data %>% mutate(SCAR = scar_name)
+  
+  return(filtered_data)
+}
+
+```
+
+
+Using this function, we can prepare the data:
+
+```{r}
+# Prepare data for each SCAR group
+SJS_TEN_TTE <- prepare_top_drugs_TTE(final_table_TTE_SJSTEN, "SJS-TEN", top_n = 40)
+DRESS_TTE <- prepare_top_drugs_TTE(final_table_TTE_DRESS, "DRESS", top_n = 40)
+AGEP_TTE <- prepare_top_drugs_TTE(final_table_TTE_AGEP, "AGEP", top_n = 40)
+
+# Combine datasets and enforce SCAR order
+combined_top_drugs <- bind_rows(SJS_TEN_TTE, DRESS_TTE, AGEP_TTE) %>%
+  mutate(SCAR = factor(SCAR, levels = c("SJS-TEN", "DRESS", "AGEP")))
+
+# Function to calculate overall statistics
+calculate_overall_stats <- function(data, scar_name) {
+  data <- data %>% filter(!is.na(TTE))
+  filtered_data <- data %>% filter(TTE > 0 & TTE <= 180)
+  
+  # IQR filtering
+  Q1 <- quantile(filtered_data$TTE, 0.25)
+  Q3 <- quantile(filtered_data$TTE, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  filtered_data <- filtered_data %>% filter(TTE >= lower_bound & TTE <= upper_bound)
+  
+  # Compute statistics
+  data.frame(
+    SCAR = scar_name,
+    causative_drug = "All Drugs",
+    median_TTE = median(filtered_data$TTE),
+    lower_CI = quantile(filtered_data$TTE, 0.25),
+    upper_CI = quantile(filtered_data$TTE, 0.75)
+  )
+}
+
+# Compute overall stats for each SCAR type
+overall_stats <- bind_rows(
+  calculate_overall_stats(final_table_TTE_SJSTEN, "SJS-TEN"),
+  calculate_overall_stats(final_table_TTE_DRESS, "DRESS"),
+  calculate_overall_stats(final_table_TTE_AGEP, "AGEP")
+) %>% mutate(SCAR = factor(SCAR, levels = c("SJS-TEN", "DRESS", "AGEP")))
+
+# Calculate summary stats and append overall stats
+summary_stats <- combined_top_drugs %>%
+  group_by(SCAR, causative_drug) %>%
+  summarise(
+    median_TTE = median(TTE, na.rm = TRUE),
+    lower_CI = quantile(TTE, probs = 0.25, na.rm = TRUE),
+    upper_CI = quantile(TTE, probs = 0.75, na.rm = TRUE),
+    .groups = "drop"  # Ensure it returns an ungrouped data frame
+  )
+
+# Append overall stats to summary stats and renumber rows
+summary_stats <- bind_rows(summary_stats, overall_stats) %>%
+  mutate(row_id = row_number())  # Renumber rows
+```
+
+Now for the plot
+
+```{r}
+# Plot: Double Lollipop with "All Drugs" as a diamond and black line
+p4.2 <- ggplot(summary_stats, aes(x = reorder(causative_drug, as.numeric(causative_drug != "All Drugs")), 
+                          y = median_TTE, color = SCAR)) +
+  
+      # Add vertical dashed line at "All Drugs" median for each SCAR
+  geom_hline(data = subset(summary_stats, causative_drug == "All Drugs"), 
+             aes(yintercept = median_TTE), 
+             linetype = "dashed", color = "gray", size = 0.8) +  # Vertical dashed line
+  
+  # Error bars for CI
+  geom_segment(aes(xend = causative_drug, y = lower_CI, yend = upper_CI), size = 1.2) + 
+  geom_point(size = 3) +  # Median marker
+  
+  # Add "All Drugs" as a diamond and black line
+  geom_segment(data = subset(summary_stats, causative_drug == "All Drugs"), 
+               aes(xend = causative_drug, y = lower_CI, yend = upper_CI), 
+               size = 1.2, color = "black") +  # Black CI line
+  
+  geom_point(data = subset(summary_stats, causative_drug == "All Drugs"),
+             aes(x = causative_drug, y = median_TTE), shape = 18, size = 5, color = "black") + # Black diamond
+  
+  # Layout adjustments
+  coord_flip() +
+  facet_wrap(~SCAR, scales = "free") +
+  theme_minimal() +
+  labs(x = "Causative Drug",
+    y = "Median Latency, 25-75th %ile (Days)"
+  ) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    strip.text = element_text(size = 12, face = "bold"),
+    legend.position = "none"
+  ) +
+  scale_color_manual(values = scar_colors) +
+  scale_y_continuous(breaks = seq(0, 180, 10))
+
+plot(p4.2)
+```
+
+
+Create the TTE plot:
+
+
+```{r}
+# Combine p4.1 and p4.2 side by side
+pFig4 <- p4.1 + p4.2 + plot_layout(widths = c(1, 1.5))
+
+# Display the combined plot
+pFig4
+```
+
+Another (using the Kaplan-Meier plot instead of the Violin plot):
+
+```{r}
+p4.1altfull <- p4.1alt$plot / (p4.1alt$table + xlab("Days")) + plot_layout(heights = c(8,2))
+pFig4_alt2 <- p4.1altfull|p4.2
+plot(pFig4_alt2)
+```
+

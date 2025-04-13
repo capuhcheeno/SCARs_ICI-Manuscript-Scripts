@@ -1,0 +1,2818 @@
+---
+title: "FAERS_Mortality_Analysis"
+author: "Eric Mukherjee"
+date: "2025-02-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## PACKAGES
+
+```{r message=FALSE, warning=FALSE, include=FALSE, r,results='hide'}
+library(readr)
+library(reshape2)
+library(dplyr)
+library(progress)
+library(RColorBrewer)
+library(patchwork)
+library(ggpubr)
+library(gridExtra)
+library(grid)
+library(pdp)
+library(Hmisc)
+library(ggplot2)
+library(caret)
+library(ranger)
+library(caret)
+library(doParallel)
+library(scales)
+library(data.table)
+library(pROC)
+library(gt)
+library(scales)
+library(vivid)
+library(pdp)
+
+```
+
+##INTRODUCTION
+
+This document is to analyze the determinants of mortality in SCAR.
+
+We will use pre-sanitized data from the FAERS_Survival_Analysis sheet (clean_data_SCAR.csv). Note this contains only those rows with age between 0 and 120 (with NAs replaced by the median age), and removes rows with outlier TTE (either greater than 180 days or less than 1 day)
+
+```{r}
+# Import Data
+clean_data_SCAR <- read_csv("clean_data_SCAR.csv")
+```
+
+###Get outcome categories
+
+We also need the outcome category data from FAERS, which we haven't really used yet
+
+```{r}
+standard_case_outcome_category <- read_csv("standard_case_outcome_category.csv")
+```
+
+We'll need a function to combine isr and primaryid into one type of id - the compositeid.
+
+```{r}
+# Function to create compositeids based on primaryid and isr, with NA handling
+create_compositeid <- function(data) {
+    # Ensure data is a data.table
+    data <- as.data.table(data)
+    
+    # Check if both primaryid and isr columns exist
+    if ("primaryid" %in% names(data) & "isr" %in% names(data)) {
+        # Create compositeid using primaryid if it's not NA, otherwise use isr
+        data[, compositeid := ifelse(!is.na(primaryid), paste0("pid.", primaryid), paste0("isr.", isr))]
+    
+    # If only primaryid exists
+    } else if ("primaryid" %in% names(data)) {
+        data[, compositeid := paste0("pid.", primaryid)]
+    
+    # If only isr exists
+    } else if ("isr" %in% names(data)) {
+        data[, compositeid := paste0("isr.", isr)]
+    
+    # If neither column exists, throw an error
+    } else {
+        stop("Neither 'primaryid' nor 'isr' columns found in the data.")
+    }
+    
+    # Return the updated data table
+    return(data)
+}
+```
+
+Then apply this function to our new table:
+
+```{r}
+# Add a compositeid and remove the other columns
+standard_case_outcome_category <- create_compositeid(standard_case_outcome_category)
+standard_case_outcome_category$primaryid <- NULL
+standard_case_outcome_category$isr <- NULL
+standard_case_outcome_category$snomed_concept_id <- NULL
+```
+
+Excellent. Now join this data to our extant data
+
+```{r}
+clean_data_SCAR_mortality <- merge(clean_data_SCAR, standard_case_outcome_category, by = "compositeid", all.x = TRUE)
+```
+
+Fix the new table by having a Death boolean:
+
+```{r}
+# Convert to data.table
+clean_data_SCAR_mortality <- as.data.table(clean_data_SCAR_mortality)
+
+# Create a binary "Death" column:
+# - If any row for a given compositeid has "DE", set Death = 1
+# - If no "DE" but other outcomes exist, set Death = 0
+# - If all `outc_code` values are NA for a compositeid, set Death = NA
+clean_data_SCAR_mortality[, Death := fifelse(
+  any(outc_code == "DE", na.rm = TRUE), 1,   # If at least one "DE", set to 1
+  fifelse(all(is.na(outc_code)), NA_integer_, 0)  # If all NA, keep NA; otherwise, 0
+), by = compositeid]
+
+# Remove duplicate rows while keeping only one row per compositeid
+clean_data_SCAR_mortality <- unique(clean_data_SCAR_mortality, by = "compositeid")
+
+# Drop the original outc_code column if no longer needed
+clean_data_SCAR_mortality[, outc_code := NULL]
+
+# Convert Death to a factor for classification
+clean_data_SCAR_mortality[, Death := factor(Death, levels = c(0, 1), labels = c("No", "Yes"))]
+
+# Print the cleaned dataset
+print(clean_data_SCAR_mortality)
+```
+
+Now that data is clean! Let's run our analysis.
+
+##ANALYSIS
+
+###Descriptive Analysis
+
+Let's look at mortality rate per SCAR:
+
+```{r}
+# Filter out rows where Death is NA
+clean_data_filtered <- clean_data_SCAR_mortality[!is.na(Death)]
+
+#Subset data
+clean_data_filtered_SJSTEN<- clean_data_filtered[clean_data_filtered$SJSTEN,]
+clean_data_filtered_DRESS<- clean_data_filtered[clean_data_filtered$DRESS,]
+clean_data_filtered_AGEP<- clean_data_filtered[clean_data_filtered$AGEP,]
+```
+
+We use this filtered version of the data for all subsequent analyses.
+
+```{r}
+# Compute mortality rate for each SCAR type separately
+mortality_by_SCAR <- data.table(
+  SCAR = c("SJS-TEN", "DRESS", "AGEP", "GBFDE"),
+  
+  # Total patients per SCAR
+  Total_Patients = c(
+    sum(clean_data_filtered$SJSTEN, na.rm = TRUE),
+    sum(clean_data_filtered$DRESS, na.rm = TRUE),
+    sum(clean_data_filtered$AGEP, na.rm = TRUE),
+    sum(clean_data_filtered$GBFDE, na.rm = TRUE)
+  ),
+  
+  # Count deaths per SCAR (Death == "Yes")
+  Deaths = c(
+    sum(clean_data_filtered$Death == "Yes" & clean_data_filtered$SJSTEN == 1, na.rm = TRUE),
+    sum(clean_data_filtered$Death == "Yes" & clean_data_filtered$DRESS == 1, na.rm = TRUE),
+    sum(clean_data_filtered$Death == "Yes" & clean_data_filtered$AGEP == 1, na.rm = TRUE),
+    sum(clean_data_filtered$Death == "Yes" & clean_data_filtered$GBFDE == 1, na.rm = TRUE)
+  )
+)
+
+# Calculate mortality rate as percentage
+mortality_by_SCAR[, Mortality_Rate := (Deaths / Total_Patients) * 100]
+
+# Mortality by Age Group
+mortality_by_age <- clean_data_filtered[, .(
+  Total_Patients = .N,
+  Deaths = sum(Death == "Yes"),
+  Mortality_Rate = (sum(Death == "Yes") / .N) * 100
+), by = age_group][order(-Mortality_Rate)]  # Sort by highest mortality rate
+
+# Mortality by Sex
+mortality_by_sex <- clean_data_filtered[, .(
+  Total_Patients = .N,
+  Deaths = sum(Death == "Yes"),
+  Mortality_Rate = (sum(Death == "Yes") / .N) * 100
+), by = sex][order(-Mortality_Rate)]  # Sort by highest mortality rate
+
+# Mortality by Region
+mortality_by_region <- clean_data_filtered[, .(
+  Total_Patients = .N,
+  Deaths = sum(Death == "Yes"),
+  Mortality_Rate = (sum(Death == "Yes") / .N) * 100
+), by = region][order(-Mortality_Rate)]  # Sort by highest mortality rate
+
+# Print the final tables
+print("Mortality by SCAR Type:")
+print(mortality_by_SCAR)
+
+print("Mortality by Age Group:")
+print(mortality_by_age)
+
+print("Mortality by Sex:")
+print(mortality_by_sex)
+
+print("Mortality by Region:")
+print(mortality_by_region)
+```
+
+Let's plot mortality curves:
+
+```{r}
+library(Hmisc)  # For adaptive binning
+library(ggplot2)
+library(data.table)
+
+# Ensure Death is binary (1 = Death, 0 = No Death)
+clean_data_filtered[, Death := as.numeric(Death == "Yes")]
+
+# 🔹 Adaptive Binning (Equal Frequency Bins)
+clean_data_filtered[, age_bin := cut2(age_yr, g = 10)]  # 10 bins based on data distribution
+clean_data_filtered[, TTE_bin := cut2(TTE, g = 10)]
+clean_data_filtered[, concomitant_bin := cut2(concomitant_count, g = 10)]
+
+# Compute mortality rates by **adaptive binned age**
+mortality_age <- clean_data_filtered[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = age_bin]
+
+# Compute mortality rates by **adaptive binned concomitant drugs**
+mortality_concomitant <- clean_data_filtered[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = concomitant_bin]
+
+# Compute mortality rates by **adaptive binned TTE**
+mortality_tte <- clean_data_filtered[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = TTE_bin]
+
+# 🔹 Plot Adaptive Binned Mortality Rate Curves
+p_actual_age <- ggplot(mortality_age, aes(x = age_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Real Mortality by Age",
+       x = "Age (Years)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x labels
+
+p_actual_concomitant <- ggplot(mortality_concomitant, aes(x = concomitant_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Real Mortality by Concomitant Drug Count",
+       x = "Concomitant Drug Count",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_actual_tte <- ggplot(mortality_tte, aes(x = TTE_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Real Mortality by TTE",
+       x = "Time to Event (TTE, Days)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Now bar graphs for our categorical friends
+
+```{r}
+# Compute actual mortality by region
+mortality_region <- clean_data_filtered[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = region]
+
+# Compute actual mortality by sex
+mortality_sex <- clean_data_filtered[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = sex]
+
+# Compute actual mortality by SCAR type
+mortality_scar <- data.table(
+  SCAR = c("SJS-TEN", "DRESS", "AGEP", "GBFDE"),
+  Total_Patients = c(
+    sum(clean_data_filtered$SJSTEN, na.rm = TRUE),
+    sum(clean_data_filtered$DRESS, na.rm = TRUE),
+    sum(clean_data_filtered$AGEP, na.rm = TRUE),
+    sum(clean_data_filtered$GBFDE, na.rm = TRUE)
+  ),
+  Deaths = c(
+    sum(clean_data_filtered$Death[clean_data_filtered$SJSTEN == 1], na.rm = TRUE),
+    sum(clean_data_filtered$Death[clean_data_filtered$DRESS == 1], na.rm = TRUE),
+    sum(clean_data_filtered$Death[clean_data_filtered$AGEP == 1], na.rm = TRUE),
+    sum(clean_data_filtered$Death[clean_data_filtered$GBFDE == 1], na.rm = TRUE)
+  )
+)
+
+# Calculate actual mortality rate for SCAR
+mortality_scar[, Mortality_Rate := (Deaths / Total_Patients) * 100]
+
+# Define SCAR colors
+scar_colors <- setNames(brewer.pal(5, "Set1"),  
+                        c("SJS-TEN", "DRESS", "AGEP", "GBFDE", "Total SCAR"))
+
+# Bar plots for actual mortality rates
+p_actual_region <- ggplot(mortality_region, aes(x = region, y = Mortality_Rate, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Real Mortality by Region",
+       x = "Region",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(legend.position = "none")
+
+p_actual_sex <- ggplot(mortality_sex, aes(x = sex, y = Mortality_Rate, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("F" = "pink", "M" = "lightblue", "NS" = "lightgreen")) +
+  labs(title = "Real Mortality by Sex",
+       x = "Sex",
+       y = "Mortality Rate (%)") +
+  theme_minimal() + theme(legend.position = "none")
+
+p_actual_scar <- ggplot(mortality_scar, aes(x = SCAR, y = Mortality_Rate, fill = SCAR)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = scar_colors) +
+  labs(title = "Real Mortality by SCAR Type",
+       x = "SCAR Type",
+       y = "Mortality Rate (%)") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+Final plot together:
+
+```{r}
+# Combine the six PDPs into one vertical column
+actual_mortality_left <- p_actual_age / p_actual_concomitant / p_actual_tte + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+actual_mortality_right <- p_actual_sex / p_actual_region / p_actual_scar + 
+  plot_layout(ncol = 1)
+
+actual_mortality_final <- actual_mortality_left | actual_mortality_right
+```
+Lets do per-SCAR mortality as well! First SJS-TEN:
+
+```{r}
+# Have to change this as usual
+clean_data_filtered_SJSTEN[, Death := as.numeric(Death == "Yes")]
+```
+
+All graphs in one
+
+```{r}
+# 🔹 Adaptive Binning (Equal Frequency Bins)
+clean_data_filtered_SJSTEN[, age_bin := cut2(age_yr, g = 10)]  # 10 bins based on data distribution
+clean_data_filtered_SJSTEN[, TTE_bin := cut2(TTE, g = 10)]
+clean_data_filtered_SJSTEN[, concomitant_bin := cut2(concomitant_count, g = 10)]
+
+# Compute mortality rates by **adaptive binned age**
+mortality_age_sjsten <- clean_data_filtered_SJSTEN[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = age_bin]
+
+# Compute mortality rates by **adaptive binned concomitant drugs**
+mortality_concomitant_sjsten <- clean_data_filtered_SJSTEN[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = concomitant_bin]
+
+# Compute mortality rates by **adaptive binned TTE**
+mortality_tte_sjsten <- clean_data_filtered_SJSTEN[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = TTE_bin]
+
+# 🔹 Plot Adaptive Binned Mortality Rate Curves
+p_actual_age_sjsten <- ggplot(mortality_age_sjsten, aes(x = age_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by Age (SJS-TEN)",
+       x = "Age (Years)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x labels
+
+p_actual_concomitant_sjsten <- ggplot(mortality_concomitant_sjsten, aes(x = concomitant_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by #Concom. Drug (SJS-TEN)",
+       x = "Concomitant Drug Count",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_actual_tte_sjsten <- ggplot(mortality_tte_sjsten, aes(x = TTE_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by TTE (SJS-TEN)",
+       x = "Time to Event (TTE, Days)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Compute actual mortality by region
+mortality_region_sjsten <- clean_data_filtered_SJSTEN[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = region]
+
+# Compute actual mortality by sex
+mortality_sex_sjsten <- clean_data_filtered_SJSTEN[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = sex]
+
+# Bar plots for actual mortality rates
+p_actual_region_sjsten <- ggplot(mortality_region_sjsten, aes(x = region, y = Mortality_Rate, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Mortality by Region (SJS-TEN)",
+       x = "Region",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(legend.position = "none")
+
+p_actual_sex_sjsten <- ggplot(mortality_sex_sjsten, aes(x = sex, y = Mortality_Rate, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("F" = "pink", "M" = "lightblue", "NS" = "lightgreen")) +
+  labs(title = "Mortality by Sex (SJS-TEN)",
+       x = "Sex",
+       y = "Mortality Rate (%)") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+Now put all the plots together:
+
+```{r}
+actual_mortality_left_sjsten <- p_actual_age_sjsten / p_actual_concomitant_sjsten / p_actual_tte_sjsten + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+actual_mortality_right_sjsten <- p_actual_region_sjsten/ p_actual_sex_sjsten  + 
+  plot_layout(ncol = 1)
+
+actual_mortality_final_sjsten <- actual_mortality_left_sjsten | actual_mortality_right_sjsten
+```
+Next up, DRESS:
+
+```{r}
+# Have to change this as usual
+clean_data_filtered_DRESS[, Death := as.numeric(Death == "Yes")]
+```
+
+All graphs in one
+
+```{r}
+# 🔹 Adaptive Binning (Equal Frequency Bins)
+clean_data_filtered_DRESS[, age_bin := cut2(age_yr, g = 10)]  # 10 bins based on data distribution
+clean_data_filtered_DRESS[, TTE_bin := cut2(TTE, g = 10)]
+clean_data_filtered_DRESS[, concomitant_bin := cut2(concomitant_count, g = 10)]
+
+# Compute mortality rates by **adaptive binned age**
+mortality_age_dress <- clean_data_filtered_DRESS[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = age_bin]
+
+# Compute mortality rates by **adaptive binned concomitant drugs**
+mortality_concomitant_dress <- clean_data_filtered_DRESS[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = concomitant_bin]
+
+# Compute mortality rates by **adaptive binned TTE**
+mortality_tte_dress <- clean_data_filtered_DRESS[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = TTE_bin]
+
+# 🔹 Plot Adaptive Binned Mortality Rate Curves
+p_actual_age_dress <- ggplot(mortality_age_dress, aes(x = age_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by Age (DRESS)",
+       x = "Age (Years)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x labels
+
+p_actual_concomitant_dress <- ggplot(mortality_concomitant_dress, aes(x = concomitant_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by #Concom. Drug (DRESS)",
+       x = "Concomitant Drug Count",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_actual_tte_dress <- ggplot(mortality_tte_dress, aes(x = TTE_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by TTE (DRESS)",
+       x = "Time to Event (TTE, Days)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Compute actual mortality by region
+mortality_region_dress <- clean_data_filtered_DRESS[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = region]
+
+# Compute actual mortality by sex
+mortality_sex_dress <- clean_data_filtered_DRESS[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = sex]
+
+# Bar plots for actual mortality rates
+p_actual_region_dress <- ggplot(mortality_region_dress, aes(x = region, y = Mortality_Rate, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Mortality by Region (DRESS)",
+       x = "Region",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(legend.position = "none")
+
+p_actual_sex_dress <- ggplot(mortality_sex_dress, aes(x = sex, y = Mortality_Rate, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("F" = "pink", "M" = "lightblue", "NS" = "lightgreen")) +
+  labs(title = "Mortality by Sex (DRESS)",
+       x = "Sex",
+       y = "Mortality Rate (%)") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+Now put all the plots together:
+
+```{r}
+actual_mortality_left_dress <- p_actual_age_dress / p_actual_concomitant_dress / p_actual_tte_dress + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+actual_mortality_right_dress <- p_actual_region_dress/ p_actual_sex_dress  + 
+  plot_layout(ncol = 1)
+
+actual_mortality_final_dress <- actual_mortality_left_dress | actual_mortality_right_dress
+```
+Finally, AGEP:
+
+```{r}
+# Have to change this as usual
+clean_data_filtered_AGEP[, Death := as.numeric(Death == "Yes")]
+```
+
+All graphs in one
+
+```{r}
+# 🔹 Adaptive Binning (Equal Frequency Bins)
+clean_data_filtered_AGEP[, age_bin := cut2(age_yr, g = 10)]  # 10 bins based on data distribution
+clean_data_filtered_AGEP[, TTE_bin := cut2(TTE, g = 10)]
+clean_data_filtered_AGEP[, concomitant_bin := cut2(concomitant_count, g = 10)]
+
+# Compute mortality rates by **adaptive binned age**
+mortality_age_agep <- clean_data_filtered_AGEP[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = age_bin]
+
+# Compute mortality rates by **adaptive binned concomitant drugs**
+mortality_concomitant_agep <- clean_data_filtered_AGEP[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = concomitant_bin]
+
+# Compute mortality rates by **adaptive binned TTE**
+mortality_tte_agep <- clean_data_filtered_AGEP[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = TTE_bin]
+
+# 🔹 Plot Adaptive Binned Mortality Rate Curves
+p_actual_age_agep <- ggplot(mortality_age_agep, aes(x = age_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by Age (AGEP)",
+       x = "Age (Years)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x labels
+
+p_actual_concomitant_agep <- ggplot(mortality_concomitant_agep, aes(x = concomitant_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by #Concom. Drug (AGEP)",
+       x = "Concomitant Drug Count",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_actual_tte_agep <- ggplot(mortality_tte_agep, aes(x = TTE_bin, y = Mortality_Rate, group = 1)) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  labs(title = "Mortality by TTE (AGEP)",
+       x = "Time to Event (TTE, Days)",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Compute actual mortality by region
+mortality_region_agep <- clean_data_filtered_AGEP[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = region]
+
+# Compute actual mortality by sex
+mortality_sex_agep <- clean_data_filtered_AGEP[, .(
+  Total = .N,
+  Deaths = sum(Death, na.rm = TRUE),
+  Mortality_Rate = (sum(Death, na.rm = TRUE) / .N) * 100
+), by = sex]
+
+# Bar plots for actual mortality rates
+p_actual_region_agep <- ggplot(mortality_region_agep, aes(x = region, y = Mortality_Rate, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Mortality by Region (AGEP)",
+       x = "Region",
+       y = "Mortality Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme(legend.position = "none")
+
+p_actual_sex_agep <- ggplot(mortality_sex_agep, aes(x = sex, y = Mortality_Rate, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("F" = "pink", "M" = "lightblue", "NS" = "lightgreen")) +
+  labs(title = "Mortality by Sex (AGEP)",
+       x = "Sex",
+       y = "Mortality Rate (%)") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+Now put all the plots together:
+
+```{r}
+actual_mortality_left_agep <- p_actual_age_agep / p_actual_concomitant_agep / p_actual_tte_agep + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+actual_mortality_right_agep <- p_actual_region_agep / p_actual_sex_agep  + 
+  plot_layout(ncol = 1)
+
+actual_mortality_final_agep <- actual_mortality_left_agep | actual_mortality_right_agep
+```
+
+
+###Univariate analysis
+
+Let's test the categorical predictors first, for Chi-square:
+
+```{r}
+# Chi-square test for categorical variables vs. mortality
+chisq_sex <- chisq.test(table(clean_data_filtered$sex, clean_data_filtered$Death))
+chisq_age_group <- chisq.test(table(clean_data_filtered$age_group, clean_data_filtered$Death))
+chisq_region <- chisq.test(table(clean_data_filtered$region, clean_data_filtered$Death))
+chisq_causative_drug <- chisq.test(table(clean_data_filtered$causative_drug, clean_data_filtered$Death))
+
+# Print p-values
+list(
+  Sex_p_value = chisq_sex$p.value,
+  Age_Group_p_value = chisq_age_group$p.value,
+  Region_p_value = chisq_region$p.value,
+  Causative_Drug_p_value = chisq_causative_drug$p.value
+)
+```
+
+
+Then, use the wilcoxon test for continuous predictors:
+
+```{r}
+# Mann-Whitney U test for TTE (since TTE is often skewed)
+wilcox_tte <- wilcox.test(TTE ~ Death, data = clean_data_filtered)
+
+# Mann-Whitney U test for concomitant count
+wilcox_concomitant <- wilcox.test(concomitant_count ~ Death, data = clean_data_filtered)
+
+# Mann-Whitney U test for age
+wilcox_age <- wilcox.test(age_yr ~ Death, data = clean_data_filtered)
+
+# Print results
+list(
+  TTE_p_value = wilcox_tte$p.value,
+  Concomitant_Count_p_value = wilcox_concomitant$p.value,
+  age_p_value = wilcox_age$p.value
+)
+```
+
+#RANDOM FORESTS
+
+we're going to regenerate this variable, because it has certain requirements (it previously had death made numeric, but we need it as a factor):
+
+```{r}
+# Filter out rows where Death is NA
+clean_data_filtered <- clean_data_SCAR_mortality[!is.na(Death)]
+
+#Subset data
+clean_data_filtered_SJSTEN<- clean_data_filtered[clean_data_filtered$SJSTEN,]
+clean_data_filtered_DRESS<- clean_data_filtered[clean_data_filtered$DRESS,]
+clean_data_filtered_AGEP<- clean_data_filtered[clean_data_filtered$AGEP,]
+```
+
+##Interaction-Enhanced RF
+
+```{r}
+# Identify the top 50 most common drugs
+top_drugs <- names(sort(table(clean_data_filtered$causative_drug), decreasing = TRUE)[1:50])
+
+# Recode rare drugs as "Other"
+clean_data_filtered[, causative_drug := ifelse(causative_drug %in% top_drugs, causative_drug, "Other")]
+
+# Convert to factor
+clean_data_filtered[, causative_drug := as.factor(causative_drug)]
+
+# Define SCAR group for grouped importance
+grouped_vars <- list(
+  "SCAR_Combined" = c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+)
+
+# Define hyperparameter grid for `ranger`
+tune_grid <- expand.grid(
+  mtry = c(2, round(sqrt(ncol(clean_data_filtered) - 1)), round(log2(ncol(clean_data_filtered) - 1))),
+  min.node.size = c(1, 5, 10),  # Controls tree depth
+  splitrule = c("gini", "extratrees")  # Try both Gini and ExtraTrees
+)
+
+# Enable parallel processing
+num_cores <- detectCores() - 1  # Use all but one core
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Define cross-validation strategy
+control <- trainControl(
+  method = "cv", 
+  number = 5,
+  classProbs = TRUE,
+  verboseIter = TRUE  # Enables progress messages
+)
+
+# Run grid search with parallel processing
+rf_tuned_interaction <- train(
+  Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count + 
+          SJSTEN + DRESS + AGEP + GBFDE, 
+  data = clean_data_filtered, 
+  method = "ranger",
+  trControl = control,
+  tuneGrid = tune_grid,
+  num.trees = 500,  # Number of trees
+  importance = "permutation",  # Enables variable importance computation
+  seed = 42
+)
+
+# Stop parallel processing
+stopCluster(cl)
+
+# View best hyperparameters
+print(rf_tuned_interaction$bestTune)
+
+# Train final optimized model
+rf_final_interaction <- ranger(
+  formula = Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count + 
+            SJSTEN + DRESS + AGEP + GBFDE,
+  data = clean_data_filtered,
+  num.trees = 500,
+  mtry = rf_tuned_interaction$bestTune$mtry,
+  min.node.size = rf_tuned_interaction$bestTune$min.node.size,
+  splitrule = rf_tuned_interaction$bestTune$splitrule,
+  probability = TRUE,  # Enables probability predictions
+  importance = "permutation",
+  seed = 42
+)
+
+# Extract variable importance scores
+vimp_results <- as.data.table(rf_final_interaction$variable.importance, keep.rownames = TRUE)
+setnames(vimp_results, c("Variable", "Importance"))
+
+# Compute Joint VIMP for SCAR Types (Summing Individual Contributions)
+scar_vimp <- vimp_results[Variable %in% c("SJSTEN", "DRESS", "AGEP", "GBFDE"), .(
+  Variable = "SCAR_Combined",
+  Importance = sum(Importance)  # Summing importance scores
+)]
+
+# Append Joint SCAR Importance to VIMP Results
+vimp_results <- rbind(vimp_results, scar_vimp)
+
+# Print variable importance table (including joint SCAR VIMP)
+print(vimp_results)
+
+# Plot VIMP (Including Grouped SCAR Importance)
+ggplot(vimp_results, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+  coord_flip() +
+  labs(title = "Variable Importance (VIMP) in Mortality Prediction",
+       x = "Variable",
+       y = "VIMP Score") +
+  theme_minimal()
+```
+
+Excellent, it works!
+
+##VALIDATION
+
+We'll have to validate this data in particular ways. First, calculate the OOB error rate:
+
+```{r}
+# OOB Error Rate
+oob_error <- rf_final_interaction$prediction.error  # Extract OOB error
+print(paste("OOB Error Rate:", oob_error))
+```
+Slightly better than the other RF.
+
+```{r}
+# Get OOB Predicted Probabilities & True Labels
+oob_predictions <- rf_final_interaction$predictions  # Extract predicted probabilities
+
+# Ensure Death labels are a binary factor with correct levels
+true_labels <- factor(clean_data_filtered$Death, levels = c("No", "Yes"))  
+
+# Compute AUC using OOB probabilities
+roc_curve <- roc(response = true_labels, predictor = oob_predictions[, "Yes"], levels = c("No", "Yes"))
+
+# Extract AUC value
+auc_value <- auc(roc_curve)
+
+# Print the corrected AUC value
+print(paste("Corrected AUC:", round(auc_value, 3)))
+
+# Optional: Plot the ROC Curve
+plot(roc_curve, col = "blue", main = "ROC Curve for Random Forest Model")
+```
+Interesting AUC. We will select this model for future work.
+
+Lets put these metrics in a table:
+
+```{r}
+# Define the metrics
+metrics <- data.table(
+  Metric = c("OOB Error/Brier Score", "AUC"),
+  Value = c(round(oob_error, 4), round(auc_value, 4))
+)
+
+# Convert to a gt table for better visualization
+metric_table <- gt(metrics) %>%
+  tab_header(title = "Model Performance Metrics") %>%
+  cols_label(
+    Metric = "Metric",
+    Value = "Value"
+  ) %>%
+  fmt_number(columns = Value, decimals = 4) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    heading.title.font.weight = "bold"
+  )
+
+# Print the table
+metric_table
+```
+
+###Reliability plots
+
+```{r}
+# Extract OOB predicted probabilities (probability of Death = "Yes")
+clean_data_filtered[, Pred_Death_Prob := rf_final_interaction$predictions[, "Yes"]]
+
+# Check summary of predictions
+summary(clean_data_filtered$Pred_Death_Prob)
+```
+```{r}
+hist(clean_data_filtered$Pred_Death_Prob, breaks = 20, 
+     main = "Histogram of Predicted Mortality Probabilities", 
+     col = "skyblue", xlab = "Predicted Probability")
+```
+
+
+
+Now create the reliability plot
+
+```{r}
+# Step 1: Create bins for predicted probabilities (10 deciles)
+clean_data_filtered[, Pred_Bin := cut2(Pred_Death_Prob, g = 10)]  # 10 bins with roughly equal counts
+
+# Step 2: Compute mean predicted probability & actual mortality rate per bin
+calibration_data <- clean_data_filtered[, .(
+  Mean_Pred_Prob = mean(Pred_Death_Prob, na.rm = TRUE),
+  Actual_Death_Rate = mean(Death == "Yes", na.rm = TRUE)
+), by = Pred_Bin]
+
+# Step 3: Sort data for smooth curve plotting
+calibration_data <- calibration_data[order(Mean_Pred_Prob)]
+
+# Step 4: Plot calibration curve
+ggplot(calibration_data, aes(x = Mean_Pred_Prob, y = Actual_Death_Rate)) +
+  geom_point(size = 3, color = "gold1") +  # Scatter points
+  geom_line(color = "gold1", size = 1) +  # Connect points to form a curve
+  geom_smooth(method = "loess", se = FALSE, color = "gold1", linetype = "dashed") +  # Smoothed trend
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +  # Perfect calibration line
+  scale_x_continuous(labels = percent, limits = c(0, 1)) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(title = "Calibration Plot (Reliability Curve)",
+       x = "Predicted Mortality Probability",
+       y = "Observed Mortality Rate") +
+  theme_minimal()
+```
+Now we can compute a Brier score:
+
+```{r}
+# Compute the Brier Score
+brier_score <- mean((clean_data_filtered$Pred_Death_Prob - as.numeric(clean_data_filtered$Death == "Yes"))^2, na.rm = TRUE)
+
+# Print result
+print(paste("Brier Score:", round(brier_score, 4)))
+```
+###Calibration by Individual SCAR
+
+We'll compute an AUC, Brier Score, and Calibration Plots for each SCAR. First, Brier score:
+
+```{r}
+# Function to compute Brier Score for each SCAR type using its boolean column
+compute_brier_score <- function(scar_column) {
+  scar_subset <- clean_data_filtered[get(scar_column) == 1]  # Subset by SCAR type
+  mean((scar_subset$Pred_Death_Prob - as.numeric(scar_subset$Death == "Yes"))^2, na.rm = TRUE)
+}
+
+# Compute Brier Scores for each SCAR
+brier_scores <- data.table(
+  SCAR = c("SJS-TEN", "DRESS", "AGEP", "GBFDE"),
+  Brier_Score = c(
+    compute_brier_score("SJSTEN"),
+    compute_brier_score("DRESS"),
+    compute_brier_score("AGEP"),
+    compute_brier_score("GBFDE")
+  )
+)
+
+# Print Brier Scores
+print(brier_scores)
+```
+
+
+
+Not bad, though for SJS-TEN it's kind of high.
+
+```{r}
+# Your predefined SCAR colors
+scar_colors <- setNames(brewer.pal(5, "Set1"),  
+                        c("SJS-TEN", "DRESS", "AGEP", "GBFDE", "Total SCAR"))
+
+# Function to compute calibration data for a given SCAR type using boolean columns
+compute_calibration_data <- function(scar_column, scar_label) {
+  scar_subset <- clean_data_filtered[get(scar_column) == 1]  # Subset by SCAR type
+  
+  # Exclude GBFDE and cases with fewer than 10 patients
+  if (scar_label == "GBFDE" || nrow(scar_subset) < 10) return(NULL)
+
+  # Add small jitter to Pred_Death_Prob to prevent duplicate quantiles
+  scar_subset[, Pred_Death_Prob := Pred_Death_Prob + runif(.N, -1e-6, 1e-6)]
+  
+  # Check number of unique values
+  if (length(unique(scar_subset$Pred_Death_Prob)) < 10) {
+    # Use alternative binning if too few unique values
+    scar_subset[, Pred_Bin := cut2(Pred_Death_Prob, g = 10)]
+  } else {
+    # Standard binning (10 deciles)
+    scar_subset[, Pred_Bin := cut(
+      Pred_Death_Prob, 
+      breaks = unique(quantile(Pred_Death_Prob, probs = seq(0, 1, 0.1), na.rm = TRUE)),
+      include.lowest = TRUE, labels = FALSE
+    )]
+  }
+
+  # Compute mean predicted probability & actual mortality rate per bin
+  calibration_data <- scar_subset[, .(
+    Mean_Pred_Prob = mean(Pred_Death_Prob, na.rm = TRUE),
+    Actual_Death_Rate = mean(Death == "Yes", na.rm = TRUE)
+  ), by = Pred_Bin]
+
+  # Sort for smooth curve plotting
+  calibration_data <- calibration_data[order(Mean_Pred_Prob)]
+  calibration_data[, SCAR := scar_label]  # Add SCAR label
+  
+  return(calibration_data)
+}
+
+# Compute calibration data for each SCAR type (excluding GBFDE)
+calibration_data_list <- rbindlist(list(
+  compute_calibration_data("SJSTEN", "SJS-TEN"),
+  compute_calibration_data("DRESS", "DRESS"),
+  compute_calibration_data("AGEP", "AGEP")
+), use.names = TRUE, fill = TRUE)
+
+# Plot Calibration Curves using Your SCAR Colors (Excluding GBFDE)
+ggplot(calibration_data_list, aes(x = Mean_Pred_Prob, y = Actual_Death_Rate, color = SCAR)) +
+  geom_point(size = 3) +  # Scatter points
+  geom_line(size = 1) +  # Connect points to form a curve
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +  # Perfect calibration
+  scale_x_continuous(labels = percent, limits = c(0, 1)) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(title = "Calibration Curves for SCAR Types (Excluding GBFDE)",
+       x = "Predicted Mortality Probability",
+       y = "Observed Mortality Rate") +
+  scale_color_manual(values = scar_colors[c("SJS-TEN", "DRESS", "AGEP")]) +  # Use only relevant colors
+  theme_minimal()
+```
+Next, we can analyze AUC on a per-SCAR basis
+
+```{r}
+# Function to compute AUC for a given SCAR type
+compute_auc <- function(scar_column, scar_label) {
+  scar_subset <- clean_data_filtered[get(scar_column) == 1]  # Subset data for this SCAR type
+  
+  # Ensure there are enough data points
+  if (nrow(scar_subset) < 10) return(NULL)
+  
+  # Convert Death to a numeric binary (1 = Yes, 0 = No)
+  true_labels <- as.numeric(scar_subset$Death == "Yes")
+  
+  # Compute AUC using predicted probabilities
+  roc_curve <- roc(response = true_labels, predictor = scar_subset$Pred_Death_Prob)
+  auc_value <- auc(roc_curve)
+  
+  return(data.table(SCAR = scar_label, AUC = auc_value))
+}
+
+# Compute AUC for each SCAR type (excluding GBFDE due to low sample size)
+auc_results <- rbindlist(list(
+  compute_auc("SJSTEN", "SJS-TEN"),
+  compute_auc("DRESS", "DRESS"),
+  compute_auc("AGEP", "AGEP")
+), use.names = TRUE, fill = TRUE)
+
+# Print AUC values for each SCAR type
+print(auc_results)
+
+# Plot AUC bar chart
+ggplot(auc_results, aes(x = SCAR, y = AUC, fill = SCAR)) +
+  geom_bar(stat = "identity", color = "black") + 
+  scale_fill_manual(values = scar_colors[c("SJS-TEN", "DRESS", "AGEP")]) +  # Use SCAR colors
+  labs(title = "AUC Comparison Across SCAR Types",
+       x = "SCAR Type",
+       y = "AUC Score") +
+  theme_minimal()
+```
+
+##VARAIBLE IMPORTANCE
+
+###Variable Importance (by Bootstrap)
+
+```{r}
+# Define number of bootstrap iterations
+num_bootstraps <- 100
+
+# Store VIMP results from bootstraps
+vimp_list <- vector("list", num_bootstraps)
+
+# Bootstrapping loop
+for (i in 1:num_bootstraps) {
+  cat("Bootstrap iteration:", i, "\n")
+  
+  # Sample data with replacement
+  bootstrap_sample <- clean_data_filtered[sample(.N, replace = TRUE)]
+  
+  # Train a new random forest model
+  rf_bootstrap <- ranger(
+    Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count + 
+            SJSTEN + DRESS + AGEP + GBFDE, 
+    data = bootstrap_sample, 
+    num.trees = 500,
+    importance = "permutation",
+    probability = TRUE
+  )
+  
+  # Store variable importance scores
+  vimp_list[[i]] <- as.data.table(rf_bootstrap$variable.importance, keep.rownames = TRUE)
+}
+```
+
+Now then, the boostrap is complete. Plot the results:
+
+```{r}
+# Combine all bootstrap VIMP results
+vimp_results <- rbindlist(vimp_list, use.names = TRUE, fill = TRUE)
+setnames(vimp_results, c("Variable", "Importance"))
+
+# Compute summary statistics for each variable
+vimp_summary <- vimp_results[, .(
+  Mean_VIMP = mean(Importance),
+  SD_VIMP = sd(Importance),
+  Lower_CI = quantile(Importance, 0.025),
+  Upper_CI = quantile(Importance, 0.975)
+), by = Variable]
+
+
+# Print bootstrapped VIMP summary with confidence intervals
+print(vimp_summary)
+
+# **Plot Bootstrapped VIMP (Including Individual SCAR VIMP, Removing Joint SCAR VIMP)**
+pVimpBootstrapIndividual <- ggplot(vimp_summary, aes(x = reorder(Variable, Mean_VIMP), y = Mean_VIMP)) +
+  
+  # **Boxplot for all variables (INCLUDING SCAR subtypes)**
+  geom_boxplot(data = vimp_results, 
+               aes(x = reorder(Variable, Importance), y = Importance),
+               fill = "lightblue", color = "black", outlier.shape = NA) +
+  
+  # **Jittered points for individual VIMP values**
+  geom_jitter(data = vimp_results, 
+              aes(x = Variable, y = Importance), 
+              width = 0.2, alpha = 0.3, color = "darkblue") +
+  
+  # **Highlight individual SCAR VIMP values in red**
+  geom_boxplot(data = vimp_results[Variable %in% c("SJSTEN", "DRESS", "AGEP", "GBFDE")], 
+               aes(x = Variable, y = Importance), 
+               fill = "red", color = "black", outlier.shape = NA) +
+  
+  geom_jitter(data = vimp_results[Variable %in% c("SJSTEN", "DRESS", "AGEP", "GBFDE")], 
+              aes(x = Variable, y = Importance), 
+              width = 0.2, alpha = 0.3, color = "darkred") +  
+  
+  # **Flip coordinates for readability**
+  coord_flip() +
+  
+  # **Titles and Labels**
+  labs(title = "Bootstrapped Variable Importance (VIMP)",
+       x = "Variable",
+       y = "Importance Score") +
+  
+  # **Minimalist Theme**
+  theme_minimal()
+```
+
+
+###VIVI Plots
+
+```{r}
+# Define feature names (excluding the response variable "Death")
+feature_names <- c("age_yr", "sex", "region", "causative_drug", 
+                   "TTE", "concomitant_count", "SJSTEN", "DRESS", "AGEP", "GBFDE")
+
+# Ensure Death is a factor
+clean_data_filtered[, Death := as.factor(Death)]
+
+# 🔹 Compute VIVI matrix
+vivi_results <- vivi(
+  data = clean_data_filtered[, c("Death", feature_names), with = FALSE],  # Data with response + predictors
+  fit = rf_final_interaction,  # Trained ranger random forest model
+  response = "Death",  # Response variable
+  gridSize = 50,  # Grid size for evaluating predictions
+  importanceType = "permutation",
+  nmax = NULL,  # Use all data rows
+  reorder = TRUE,  # Reorder matrix for better visualization
+  class = "Yes",  # Factor level of the response variable to analyze
+  numPerm = 4,  # Number of permutations for importance
+  showVimpError = FALSE  # Suppress standard error printout
+)
+
+# 🔹 Convert `vivi_results` matrix to a long format data table
+vivi_matrix <- as.data.table(melt(vivi_results, varnames = c("Var1", "Var2"), value.name = "Interaction"))
+vivi_matrix[, Interaction := round(Interaction, 3)]  # Round values for display
+
+# 🔹 Generate the VIVI Heatmap with Rotated Labels
+vivi_plot <- viviHeatmap(vivi_results) +
+  ggtitle("Variable Importance & Interaction Strengths") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0))  # Rotate x-axis labels
+
+# 🔹 Overlay text labels onto heatmap
+pVIVI <- vivi_plot + 
+  geom_text(data = vivi_matrix, aes(x = Var1, y = Var2, label = Interaction), 
+            color = "black", size = 2.5)
+
+```
+
+
+###PDP Plots
+
+We'll start with a PDP plot with age:
+
+```{r}
+pdp_age <- partial(
+  object = rf_final_interaction, 
+  pred.var = "age_yr", 
+  train = clean_data_filtered,
+  grid.resolution = 100,  # Number of points in PDP
+  prob = TRUE  # Ensures output is probability-based
+)
+
+# Convert to data frame for plotting
+pdp_age_df <- as.data.frame(pdp_age)
+
+# Plot PDP for age
+pdp_age_plot <- ggplot(pdp_age_df, aes(x = age_yr, y = (1 - yhat) * 100)) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = clean_data_filtered, aes(x = age_yr), sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Add rug
+  labs(title = "PDP for Age",
+       x = "Age (Years)",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+
+
+#Display the plot
+pdp_age_plot
+
+```
+
+Then, TTE:
+
+```{r}
+# Compute PDP for TTE using the pdp package
+pdp_tte <- partial(
+  object = rf_final_interaction, 
+  pred.var = "TTE", 
+  train = clean_data_filtered,
+  grid.resolution = 100,  # Number of points in PDP
+  prob = TRUE  # Ensures output is probability-based
+)
+
+# Convert to data frame for plotting
+pdp_tte_df <- as.data.frame(pdp_tte)
+
+# Add jitter to TTE values before plotting
+jittered_tte <- clean_data_filtered %>%
+  mutate(jittered_x = TTE + runif(n(), min = -0.5, max = 0.5))  # Small jitter to avoid overlap
+
+# Plot PDP for TTE (using 1 - yhat)
+pdp_tte_plot <- ggplot(pdp_tte_df, aes(x = TTE, y = (1 - yhat) * 100)) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_tte, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  labs(title = "PDP for TTE",
+       x = "Time to Event (TTE), Days",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  ylim(0, NA)  # Ensure the y-axis starts at 0
+
+# Display the plot
+pdp_tte_plot
+```
+
+Next concomitant_count:
+
+```{r}
+# Compute PDP for Concomitant Medication Count using the pdp package
+pdp_concomitant <- partial(
+  object = rf_final_interaction, 
+  pred.var = "concomitant_count", 
+  train = clean_data_filtered,
+  grid.resolution = 100,  # Number of points in PDP
+  prob = TRUE  # Ensures output is probability-based
+)
+
+# Convert to data frame for plotting
+pdp_concomitant_df <- as.data.frame(pdp_concomitant)
+
+# Add jitter to concomitant_count values before plotting
+jittered_concomitant <- clean_data_filtered %>%
+  mutate(jittered_x = concomitant_count + runif(n(), min = -0.2, max = 0.2))  # Manual jitter
+
+# Plot PDP for Concomitant Medication Count (using 1 - yhat)
+pdp_concomitant_plot <- ggplot(pdp_concomitant_df, aes(x = concomitant_count, y = (1 - yhat) * 100)) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_concomitant, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  
+  labs(title = "PDP for Concomitant Med. Count",
+       x = "Number of Concomitant Medications",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  ylim(0, NA)  # Ensure the y-axis starts at 0
+
+# Display plot
+pdp_concomitant_plot
+```
+
+Then, sex:
+
+```{r}
+# Compute Partial Dependence for sex
+pdp_sex <- partial(
+  object = rf_final_interaction,  # Trained random forest model
+  pred.var = "sex",               # Feature of interest
+  train = clean_data_filtered,    # Full dataset (ensures averaging over covariates)
+  prob = TRUE                     # Use probabilities instead of logit scores
+)
+
+# Plot the PDP
+pdp_sex_plot <- ggplot(pdp_sex, aes(x = sex, y = (1-yhat)*100, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+scale_fill_manual(values = c("pink", "lightblue", "lightgreen")) +  labs(title = "PDP for Sex",
+       x = "Sex",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  ylim(0, NA)
+
+#Display the plot
+pdp_sex_plot
+```
+
+
+
+Then for region:
+
+```{r}
+# Compute PDP for Region using the pdp package
+pdp_region <- partial(
+  object = rf_final_interaction, 
+  pred.var = "region", 
+  train = clean_data_filtered,
+  grid.resolution = length(unique(clean_data_filtered$region)),  # Number of points in PDP
+  prob = TRUE  # Ensures output is probability-based
+)
+
+# Convert to data frame for plotting
+pdp_region_df <- as.data.frame(pdp_region)
+
+# Plot PDP for Region (with y-axis starting at 0)
+pdp_region_plot <- ggplot(pdp_region_df, aes(x = region, y = (1 - yhat) * 100, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "PDP for Region",
+       x = "Region",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none",  # Hide legend since x-axis has labels
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 8)) +  # Rotate x-axis labels
+  ylim(0, NA)  # Ensures ymin starts at 0 while allowing ymax to adjust automatically
+
+# Show the plot
+pdp_region_plot
+```
+
+
+Now, for the computed mortality for each SCAR;
+
+```{r}
+# Define SCAR conditions to evaluate
+scar_types <- c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+
+# Define consistent SCAR colors
+scar_colors <- setNames(brewer.pal(5, "Set1"), c("SJSTEN", "DRESS", "AGEP", "GBFDE", "Total SCAR"))
+
+# Initialize an empty list to store PDP results
+pdp_scar_list <- list()
+
+# Compute PDP for each SCAR type
+for (scar in scar_types) {
+  
+  # Generate Partial Dependence Data
+  pdp_result <- partial(
+    object = rf_final_interaction,  # Trained RF model
+    pred.var = scar,                # SCAR variable of interest
+    train = clean_data_filtered,    # Full dataset for averaging across covariates
+    prob = TRUE,                    # Ensure probability-based interpretation
+    categorical = TRUE              # Explicitly treat SCAR as categorical
+  )
+  
+  # Rename columns for consistency
+  colnames(pdp_result) <- c("SCAR_Value", "Predicted_Prob")
+  
+  # Filter for SCAR = TRUE (1) only
+  pdp_result <- pdp_result[pdp_result$SCAR_Value == 1, ]
+  
+  # Label the SCAR type
+  pdp_result$SCAR_Type <- scar
+  
+  # Store in list
+  pdp_scar_list[[scar]] <- pdp_result
+}
+
+# Combine PDP results into a single data frame
+pdp_data_scar <- do.call(rbind, pdp_scar_list)
+
+# Create the SCAR PDP Bar Plot
+pdp_scar_plot <- ggplot(pdp_data_scar, aes(x = SCAR_Type, y = 100 * (1-Predicted_Prob), fill = SCAR_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = scar_colors) +  # Apply custom SCAR colors
+  labs(title = "Predicted Mortality by SCAR Type",
+       x = "SCAR Type",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none") +  # Hide legend since labels are on x-axis
+  ylim(0, NA)  # Ensure y-axis starts at 0 while allowing ymax to adjust automatically
+
+# Display the plot
+print(pdp_scar_plot)
+```
+
+###FINAL PLOTS
+
+Now we can combine them in one big plot!
+
+```{r}
+# Combine the six PDPs into one vertical column
+pdp_column1 <- pdp_age_plot / pdp_concomitant_plot / pdp_tte_plot + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+pdp_column2 <- pdp_sex_plot / pdp_region_plot/ pdp_scar_plot + 
+  plot_layout(ncol = 1)
+
+# Combine into the left half of the figure
+fig8_left_column <- pdp_column1 | pdp_column2
+
+# Combine heatmap and metric table into the second column
+fig8_right_column <- pVIVI / metric_table + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights (more space for heatmap)
+
+# Or we can use the bootstrap VIMP instead of the VIVI plot
+fig8_right_column_alt <- pVimpBootstrapIndividual / metric_table + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights
+
+# Combine them
+fig8_complete <- fig8_left_column | fig8_right_column
+fig8_complete_alt <- fig8_left_column | fig8_right_column_alt
+
+```
+
+
+##Random forest by Individual SCAR
+
+We will perform separate RFs for each individual SCAR as well, to remove the effect of that variable.
+
+First, SJS-TEN only:
+
+```{r}
+# Define hyperparameter grid for `ranger`
+tune_grid <- expand.grid(
+  mtry = c(2, round(sqrt(ncol(clean_data_filtered_SJSTEN) - 1)), round(log2(ncol(clean_data_filtered_SJSTEN) - 1))),
+  min.node.size = c(1, 5, 10),  # Controls tree depth
+  splitrule = c("gini", "extratrees")  # Try both Gini and ExtraTrees
+)
+
+# Enable parallel processing
+num_cores <- detectCores() - 1  # Use all but one core
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Define cross-validation strategy
+control <- trainControl(
+  method = "cv", 
+  number = 5,
+  classProbs = TRUE,
+  verboseIter = TRUE  # Enables progress messages
+)
+
+# Run grid search with parallel processing
+rf_tuned_interaction_sjsten <- train(
+  Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count, 
+  data = clean_data_filtered_SJSTEN, 
+  method = "ranger",
+  trControl = control,
+  tuneGrid = tune_grid,
+  num.trees = 500,  # Number of trees
+  importance = "permutation",  # Enables variable importance computation
+  seed = 42
+)
+
+# Stop parallel processing
+stopCluster(cl)
+
+# View best hyperparameters
+print(rf_tuned_interaction_sjsten$bestTune)
+
+# Train final optimized model
+rf_final_interaction_sjsten <- ranger(
+  formula = Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+  data = clean_data_filtered_SJSTEN,
+  num.trees = 500,
+  mtry = rf_tuned_interaction_sjsten$bestTune$mtry,
+  min.node.size = rf_tuned_interaction_sjsten$bestTune$min.node.size,
+  splitrule = rf_tuned_interaction_sjsten$bestTune$splitrule,
+  probability = TRUE,  # Enables probability predictions
+  importance = "permutation",
+  seed = 42
+)
+
+# Extract variable importance scores
+vimp_results_sjsten <- as.data.table(rf_final_interaction_sjsten$variable.importance, keep.rownames = TRUE)
+setnames(vimp_results_sjsten, c("Variable", "Importance"))
+
+# Print variable importance table (including joint SCAR VIMP)
+print(vimp_results_sjsten)
+
+# Plot VIMP (Including Grouped SCAR Importance)
+ggplot(vimp_results_sjsten, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+  coord_flip() +
+  labs(title = "Variable Importance (VIMP) in Mortality Prediction, SJS-TEN",
+       x = "Variable",
+       y = "VIMP Score") +
+  theme_minimal()
+```
+
+
+Then, DRESS only:
+
+```{r}
+# Define hyperparameter grid for `ranger`
+tune_grid <- expand.grid(
+  mtry = c(2, round(sqrt(ncol(clean_data_filtered_DRESS) - 1)), round(log2(ncol(clean_data_filtered_DRESS) - 1))),
+  min.node.size = c(1, 5, 10),  # Controls tree depth
+  splitrule = c("gini", "extratrees")  # Try both Gini and ExtraTrees
+)
+
+# Enable parallel processing
+num_cores <- detectCores() - 1  # Use all but one core
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Define cross-validation strategy
+control <- trainControl(
+  method = "cv", 
+  number = 5,
+  classProbs = TRUE,
+  verboseIter = TRUE  # Enables progress messages
+)
+
+# Run grid search with parallel processing
+rf_tuned_interaction_dress <- train(
+  Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count, 
+  data = clean_data_filtered_DRESS, 
+  method = "ranger",
+  trControl = control,
+  tuneGrid = tune_grid,
+  num.trees = 500,  # Number of trees
+  importance = "permutation",  # Enables variable importance computation
+  seed = 42
+)
+
+# Stop parallel processing
+stopCluster(cl)
+
+# View best hyperparameters
+print(rf_tuned_interaction_dress$bestTune)
+
+# Train final optimized model
+rf_final_interaction_dress <- ranger(
+  formula = Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+  data = clean_data_filtered_DRESS,
+  num.trees = 500,
+  mtry = rf_tuned_interaction_dress$bestTune$mtry,
+  min.node.size = rf_tuned_interaction_dress$bestTune$min.node.size,
+  splitrule = rf_tuned_interaction_dress$bestTune$splitrule,
+  probability = TRUE,  # Enables probability predictions
+  importance = "permutation",
+  seed = 42
+)
+
+# Extract variable importance scores
+vimp_results_dress <- as.data.table(rf_final_interaction_dress$variable.importance, keep.rownames = TRUE)
+setnames(vimp_results_dress, c("Variable", "Importance"))
+
+# Print variable importance table
+print(vimp_results_dress)
+
+# Plot VIMP
+ggplot(vimp_results_dress, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+  coord_flip() +
+  labs(title = "Variable Importance (VIMP) in Mortality Prediction, DRESS",
+       x = "Variable",
+       y = "VIMP Score") +
+  theme_minimal()
+```
+
+Finally, AGEP only:
+
+```{r}
+# Define hyperparameter grid for `ranger`
+tune_grid <- expand.grid(
+  mtry = c(2, round(sqrt(ncol(clean_data_filtered_AGEP) - 1)), round(log2(ncol(clean_data_filtered_AGEP) - 1))),
+  min.node.size = c(1, 5, 10),  # Controls tree depth
+  splitrule = c("gini", "extratrees")  # Try both Gini and ExtraTrees
+)
+
+# Enable parallel processing
+num_cores <- detectCores() - 1  # Use all but one core
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+# Define cross-validation strategy
+control <- trainControl(
+  method = "cv", 
+  number = 5,
+  classProbs = TRUE,
+  verboseIter = TRUE  # Enables progress messages
+)
+
+# Run grid search with parallel processing
+rf_tuned_interaction_agep <- train(
+  Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count, 
+  data = clean_data_filtered_AGEP, 
+  method = "ranger",
+  trControl = control,
+  tuneGrid = tune_grid,
+  num.trees = 500,  # Number of trees
+  importance = "permutation",  # Enables variable importance computation
+  seed = 42
+)
+
+# Stop parallel processing
+stopCluster(cl)
+
+# View best hyperparameters
+print(rf_tuned_interaction_agep$bestTune)
+
+# Train final optimized model
+rf_final_interaction_agep <- ranger(
+  formula = Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+  data = clean_data_filtered_AGEP,
+  num.trees = 500,
+  mtry = rf_tuned_interaction_agep$bestTune$mtry,
+  min.node.size = rf_tuned_interaction_agep$bestTune$min.node.size,
+  splitrule = rf_tuned_interaction_agep$bestTune$splitrule,
+  probability = TRUE,  # Enables probability predictions
+  importance = "permutation",
+  seed = 42
+)
+
+# Extract variable importance scores
+vimp_results_agep <- as.data.table(rf_final_interaction_agep$variable.importance, keep.rownames = TRUE)
+setnames(vimp_results_agep, c("Variable", "Importance"))
+
+# Print variable importance table
+print(vimp_results_agep)
+
+# Plot VIMP
+ggplot(vimp_results_agep, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+  coord_flip() +
+  labs(title = "Variable Importance (VIMP) in Mortality Prediction, AGEP",
+       x = "Variable",
+       y = "VIMP Score") +
+  theme_minimal()
+```
+
+###Validation
+
+Now we validate these:
+
+```{r}
+# OOB Error Rate
+oob_error_sjsten <- rf_final_interaction_sjsten$prediction.error
+oob_error_dress <- rf_final_interaction_dress$prediction.error
+oob_error_agep <- rf_final_interaction_agep$prediction.error
+
+# Print results
+print(paste("OOB Error Rate SJS-TEN:", oob_error_sjsten))
+print(paste("OOB Error Rate DRESS:", oob_error_dress))
+print(paste("OOB Error Rate AGEP:", oob_error_agep))
+```
+Then get AUCs
+
+```{r}
+# Get OOB Predicted Probabilities & True Labels
+oob_predictions_sjsten <- rf_final_interaction_sjsten$predictions
+oob_predictions_dress <- rf_final_interaction_dress$predictions
+oob_predictions_agep <- rf_final_interaction_agep$predictions
+
+# Ensure Death labels are a binary factor with correct levels
+true_labels_sjsten <- factor(clean_data_filtered_SJSTEN$Death, levels = c("No", "Yes"))
+true_labels_dress <- factor(clean_data_filtered_DRESS$Death, levels = c("No", "Yes"))  
+true_labels_agep <- factor(clean_data_filtered_AGEP$Death, levels = c("No", "Yes"))  
+
+# Compute AUC using OOB probabilities
+roc_curve_sjsten <- roc(response = true_labels_sjsten, predictor = oob_predictions_sjsten[, "Yes"], levels = c("No", "Yes"))
+roc_curve_dress <- roc(response = true_labels_dress, predictor = oob_predictions_dress[, "Yes"], levels = c("No", "Yes"))
+roc_curve_agep <- roc(response = true_labels_agep, predictor = oob_predictions_agep[, "Yes"], levels = c("No", "Yes"))
+
+# Extract AUC value
+auc_value_sjsten <- auc(roc_curve_sjsten)
+auc_value_dress <- auc(roc_curve_dress)
+auc_value_agep <- auc(roc_curve_agep)
+
+# Print the corrected AUC value
+print(paste("Corrected AUC (SJS-TEN):", round(auc_value_sjsten, 3)))
+print(paste("Corrected AUC (DRESS):", round(auc_value_dress, 3)))
+print(paste("Corrected AUC (AGEP):", round(auc_value_agep, 3)))
+```
+Then get Brier scores:
+
+```{r}
+# Compute the Brier Score
+brier_score_sjsten <- mean((clean_data_filtered_SJSTEN$Pred_Death_Prob - as.numeric(clean_data_filtered_SJSTEN$Death == "Yes"))^2, na.rm = TRUE)
+brier_score_dress <- mean((clean_data_filtered_DRESS$Pred_Death_Prob - as.numeric(clean_data_filtered_DRESS$Death == "Yes"))^2, na.rm = TRUE)
+brier_score_agep <- mean((clean_data_filtered_AGEP$Pred_Death_Prob - as.numeric(clean_data_filtered_AGEP$Death == "Yes"))^2, na.rm = TRUE)
+
+# Print result
+print(paste("Brier Score (SJS-TEN):", round(brier_score_sjsten, 4)))
+print(paste("Brier Score (DRESS):", round(brier_score_dress, 4)))
+print(paste("Brier Score (AGEP):", round(brier_score_agep, 4)))
+```
+
+### Variable Importance (by Bootstrap)
+
+Let's get our bootstrap VIMPs for each individual SCAR RF
+
+```{r}
+# Define number of bootstrap iterations
+num_bootstraps <- 100
+
+# Store VIMP results from bootstraps
+vimp_list_sjsten <- vector("list", num_bootstraps)
+vimp_list_dress <- vector("list", num_bootstraps)
+vimp_list_agep <- vector("list", num_bootstraps)
+
+# Bootstrapping loop
+for (i in 1:num_bootstraps) {
+  cat("Bootstrap iteration:", i, "\n")
+  
+  # Sample data with replacement
+  bootstrap_sample_sjsten <- clean_data_filtered_SJSTEN[sample(.N, replace = TRUE)]
+    bootstrap_sample_dress <- clean_data_filtered_DRESS[sample(.N, replace = TRUE)]
+    bootstrap_sample_agep <- clean_data_filtered_AGEP[sample(.N, replace = TRUE)]
+  
+  # Train a new random forest model
+  rf_bootstrap_sjsten <- ranger(
+    Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+    data = bootstrap_sample_sjsten, 
+    num.trees = 500,
+    importance = "permutation",
+    probability = TRUE
+  )
+  rf_bootstrap_dress <- ranger(
+    Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+    data = bootstrap_sample_dress, 
+    num.trees = 500,
+    importance = "permutation",
+    probability = TRUE
+  )
+  rf_bootstrap_agep <- ranger(
+    Death ~ age_yr + sex + region + causative_drug + TTE + concomitant_count,
+    data = bootstrap_sample_agep, 
+    num.trees = 500,
+    importance = "permutation",
+    probability = TRUE
+  )
+  
+  # Store variable importance scores
+  vimp_list_sjsten[[i]] <- as.data.table(rf_bootstrap_sjsten$variable.importance, keep.rownames = TRUE)
+  vimp_list_dress[[i]] <- as.data.table(rf_bootstrap_dress$variable.importance, keep.rownames = TRUE)
+  vimp_list_agep[[i]] <- as.data.table(rf_bootstrap_agep$variable.importance, keep.rownames = TRUE)
+}
+```
+Now plot results for SJS-TEN
+
+```{r}
+# Combine all bootstrap VIMP results
+vimp_results_sjsten <- rbindlist(vimp_list_sjsten, use.names = TRUE, fill = TRUE)
+setnames(vimp_results_sjsten, c("Variable", "Importance"))
+
+# Compute summary statistics for each variable
+vimp_summary_sjsten <- vimp_results_sjsten[, .(
+  Mean_VIMP = mean(Importance),
+  SD_VIMP = sd(Importance),
+  Lower_CI = quantile(Importance, 0.025),
+  Upper_CI = quantile(Importance, 0.975)
+), by = Variable]
+
+
+# Print bootstrapped VIMP summary with confidence intervals
+print(vimp_summary_sjsten)
+
+# **Plot Bootstrapped VIMP (Including Individual SCAR VIMP, Removing Joint SCAR VIMP)**
+pVimpBootstrapSJSTEN <- ggplot(vimp_summary_sjsten, aes(x = reorder(Variable, Mean_VIMP), y = Mean_VIMP)) +
+  
+  # **Boxplot for all variables (INCLUDING SCAR subtypes)**
+  geom_boxplot(data = vimp_results_sjsten, 
+               aes(x = reorder(Variable, Importance), y = Importance),
+               fill = "lightblue", color = "black", outlier.shape = NA) +
+  
+  # **Jittered points for individual VIMP values**
+  geom_jitter(data = vimp_results_sjsten, 
+              aes(x = Variable, y = Importance), 
+              width = 0.2, alpha = 0.3, color = "darkblue") +
+
+  # **Flip coordinates for readability**
+  coord_flip() +
+  
+  # **Titles and Labels**
+  labs(title = "Bootstrapped Variable Importance (VIMP), SJS-TEN",
+       x = "Variable",
+       y = "Importance Score") +
+  
+  # **Minimalist Theme**
+  theme_minimal()
+```
+Then do DRESS:
+
+```{r}
+# Combine all bootstrap VIMP results
+vimp_results_dress <- rbindlist(vimp_list_dress, use.names = TRUE, fill = TRUE)
+setnames(vimp_results_dress, c("Variable", "Importance"))
+
+# Compute summary statistics for each variable
+vimp_summary_dress <- vimp_results_dress[, .(
+  Mean_VIMP = mean(Importance),
+  SD_VIMP = sd(Importance),
+  Lower_CI = quantile(Importance, 0.025),
+  Upper_CI = quantile(Importance, 0.975)
+), by = Variable]
+
+
+# Print bootstrapped VIMP summary with confidence intervals
+print(vimp_summary_dress)
+
+# **Plot Bootstrapped VIMP (Including Individual SCAR VIMP, Removing Joint SCAR VIMP)**
+pVimpBootstrapDRESS <- ggplot(vimp_summary_dress, aes(x = reorder(Variable, Mean_VIMP), y = Mean_VIMP)) +
+  
+  # **Boxplot for all variables (INCLUDING SCAR subtypes)**
+  geom_boxplot(data = vimp_results_dress, 
+               aes(x = reorder(Variable, Importance), y = Importance),
+               fill = "lightblue", color = "black", outlier.shape = NA) +
+  
+  # **Jittered points for individual VIMP values**
+  geom_jitter(data = vimp_results_dress, 
+              aes(x = Variable, y = Importance), 
+              width = 0.2, alpha = 0.3, color = "darkblue") +
+
+  # **Flip coordinates for readability**
+  coord_flip() +
+  
+  # **Titles and Labels**
+  labs(title = "Bootstrapped Variable Importance (VIMP), DRESS",
+       x = "Variable",
+       y = "Importance Score") +
+  
+  # **Minimalist Theme**
+  theme_minimal()
+```
+
+Then do AGEP:
+
+```{r}
+# Combine all bootstrap VIMP results
+vimp_results_agep <- rbindlist(vimp_list_agep, use.names = TRUE, fill = TRUE)
+setnames(vimp_results_agep, c("Variable", "Importance"))
+
+# Compute summary statistics for each variable
+vimp_summary_agep <- vimp_results_agep[, .(
+  Mean_VIMP = mean(Importance),
+  SD_VIMP = sd(Importance),
+  Lower_CI = quantile(Importance, 0.025),
+  Upper_CI = quantile(Importance, 0.975)
+), by = Variable]
+
+
+# Print bootstrapped VIMP summary with confidence intervals
+print(vimp_summary_agep)
+
+# **Plot Bootstrapped VIMP**
+pVimpBootstrapAGEP <- ggplot(vimp_summary_agep, aes(x = reorder(Variable, Mean_VIMP), y = Mean_VIMP)) +
+  
+  # **Boxplot for all variables (INCLUDING SCAR subtypes)**
+  geom_boxplot(data = vimp_results_agep, 
+               aes(x = reorder(Variable, Importance), y = Importance),
+               fill = "lightblue", color = "black", outlier.shape = NA) +
+  
+  # **Jittered points for individual VIMP values**
+  geom_jitter(data = vimp_results_agep, 
+              aes(x = Variable, y = Importance), 
+              width = 0.2, alpha = 0.3, color = "darkblue") +
+
+  # **Flip coordinates for readability**
+  coord_flip() +
+  
+  # **Titles and Labels**
+  labs(title = "Bootstrapped Variable Importance (VIMP), AGEP",
+       x = "Variable",
+       y = "Importance Score") +
+  
+  # **Minimalist Theme**
+  theme_minimal()
+```
+
+###VIVI Plots
+
+VIVI plots are a method of simultaneously plotting VIMPs and VINTs (which measure the strength of the interaction between two variables). Do the VIVI Plot for SJS-TEN:
+
+```{r}
+# Define feature names (excluding the response variable "Death")
+feature_names <- c("age_yr", "sex", "region", "causative_drug", "TTE", "concomitant_count")
+
+# Ensure Death is a factor
+clean_data_filtered_SJSTEN[, Death := as.factor(Death)]
+
+# 🔹 Compute VIVI matrix
+vivi_results_sjsten <- vivi(
+  data = clean_data_filtered_SJSTEN[, c("Death", feature_names), with = FALSE],  # Data with response + predictors
+  fit = rf_final_interaction_sjsten,  # Trained ranger random forest model
+  response = "Death",  # Response variable
+  gridSize = 50,  # Grid size for evaluating predictions
+  importanceType = "permutation",
+  nmax = NULL,  # Use all data rows
+  reorder = TRUE,  # Reorder matrix for better visualization
+  class = "Yes",  # Factor level of the response variable to analyze
+  numPerm = 4,  # Number of permutations for importance
+  showVimpError = FALSE  # Suppress standard error printout
+)
+
+# 🔹 Convert `vivi_results` matrix to a long format data table
+vivi_matrix_sjsten <- as.data.table(melt(vivi_results_sjsten, varnames = c("Var1", "Var2"), value.name = "Interaction"))
+vivi_matrix_sjsten[, Interaction := round(Interaction, 3)]  # Round values for display
+
+# 🔹 Generate the VIVI Heatmap with Text Labels
+vivi_plot_sjsten <- viviHeatmap(vivi_results_sjsten) +
+  ggtitle("Variable Importance & Interaction Strengths, SJS-TEN") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0))  # Rotate x-axis labels
+
+# 🔹 Overlay text labels onto heatmap
+pVIVI_sjsten <- vivi_plot_sjsten + 
+  geom_text(data = vivi_matrix_sjsten, aes(x = Var1, y = Var2, label = Interaction), 
+            color = "black", size = 4)
+```
+
+
+Next, DRESS:
+
+```{r}
+# Define feature names (excluding the response variable "Death")
+feature_names <- c("age_yr", "sex", "region", "causative_drug", "TTE", "concomitant_count")
+
+# Ensure Death is a factor
+clean_data_filtered_DRESS[, Death := as.factor(Death)]
+
+# 🔹 Compute VIVI matrix
+vivi_results_dress <- vivi(
+  data = clean_data_filtered_DRESS[, c("Death", feature_names), with = FALSE],  # Data with response + predictors
+  fit = rf_final_interaction_dress,  # Trained ranger random forest model
+  response = "Death",  # Response variable
+  gridSize = 50,  # Grid size for evaluating predictions
+  importanceType = "permutation",
+  nmax = NULL,  # Use all data rows
+  reorder = TRUE,  # Reorder matrix for better visualization
+  class = "Yes",  # Factor level of the response variable to analyze
+  numPerm = 4,  # Number of permutations for importance
+  showVimpError = FALSE  # Suppress standard error printout
+)
+
+# 🔹 Convert `vivi_results` matrix to a long format data table
+vivi_matrix_dress <- as.data.table(melt(vivi_results_dress, varnames = c("Var1", "Var2"), value.name = "Interaction"))
+vivi_matrix_dress[, Interaction := round(Interaction, 3)]  # Round values for display
+
+# 🔹 Generate the VIVI Heatmap with Text Labels
+vivi_plot_dress <- viviHeatmap(vivi_results_dress) +
+  ggtitle("Variable Importance & Interaction Strengths, DRESS") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0))  # Rotate x-axis labels +
+  theme_minimal()
+
+# 🔹 Overlay text labels onto heatmap
+pVIVI_dress <- vivi_plot_dress + 
+  geom_text(data = vivi_matrix_dress, aes(x = Var1, y = Var2, label = Interaction), 
+            color = "black", size = 4)
+```
+
+
+Now AGEP:
+
+```{r}
+# Define feature names (excluding the response variable "Death")
+feature_names <- c("age_yr", "sex", "region", "causative_drug", "TTE", "concomitant_count")
+
+# Ensure Death is a factor
+clean_data_filtered_AGEP[, Death := as.factor(Death)]
+
+# 🔹 Compute VIVI matrix
+vivi_results_agep <- vivi(
+  data = clean_data_filtered_AGEP[, c("Death", feature_names), with = FALSE],  # Data with response + predictors
+  fit = rf_final_interaction_agep,  # Trained ranger random forest model
+  response = "Death",  # Response variable
+  gridSize = 50,  # Grid size for evaluating predictions
+  importanceType = "permutation",
+  nmax = NULL,  # Use all data rows
+  reorder = TRUE,  # Reorder matrix for better visualization
+  class = "Yes",  # Factor level of the response variable to analyze
+  numPerm = 4,  # Number of permutations for importance
+  showVimpError = FALSE  # Suppress standard error printout
+)
+
+# 🔹 Convert `vivi_results` matrix to a long format data table
+vivi_matrix_agep <- as.data.table(melt(vivi_results_agep, varnames = c("Var1", "Var2"), value.name = "Interaction"))
+vivi_matrix_agep[, Interaction := round(Interaction, 3)]  # Round values for display
+
+# 🔹 Generate the VIVI Heatmap with Text Labels
+vivi_plot_agep <- viviHeatmap(vivi_results_agep) +
+  ggtitle("Variable Importance & Interaction Strengths, AGEP") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 0))  # Rotate x-axis labels
+
+# 🔹 Overlay text labels onto heatmap
+pVIVI_agep <- vivi_plot_agep + 
+  geom_text(data = vivi_matrix_agep, aes(x = Var1, y = Var2, label = Interaction), 
+            color = "black", size = 4)
+```
+
+###PDP Plots (SJS-TEN)
+
+We'll generate the same plots for SJS-TEN:
+
+```{r}
+# Define PDP for Age (SJS-TEN)
+pdp_age_sjs <- partial(
+  object = rf_final_interaction_sjsten, 
+  pred.var = "age_yr", 
+  train = clean_data_filtered_SJSTEN,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Add jitter to age values before plotting
+jittered_age_sjs <- clean_data_filtered_SJSTEN %>%
+  mutate(jittered_x = age_yr + runif(n(), min = -0.5, max = 0.5))  # Small jitter to avoid overlap
+
+# Convert to data frame and plot
+pdp_age_sjs_plot <- ggplot(as.data.frame(pdp_age_sjs), aes(x = age_yr, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_age_sjs, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Age (SJS-TEN)",
+       x = "Age (Years)",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Define PDP for TTE (SJS-TEN)
+pdp_tte_sjs <- partial(
+  object = rf_final_interaction_sjsten, 
+  pred.var = "TTE", 
+  train = clean_data_filtered_SJSTEN,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Add jitter to TTE values before plotting
+jittered_tte_sjs <- clean_data_filtered_SJSTEN %>%
+  mutate(jittered_x = TTE + runif(n(), min = -0.5, max = 0.5))  # Small jitter to avoid overlap
+
+# Convert to data frame and plot
+pdp_tte_sjs_plot <- ggplot(as.data.frame(pdp_tte_sjs), aes(x = TTE, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_tte_sjs, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for TTE (SJS-TEN)",
+       x = "Time to Event (TTE), Days",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Define PDP for Concomitant Medications (SJS-TEN)
+pdp_concomitant_sjs <- partial(
+  object = rf_final_interaction_sjsten, 
+  pred.var = "concomitant_count", 
+  train = clean_data_filtered_SJSTEN,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Add jitter to Concomitant Medication Count before plotting
+jittered_concomitant_sjs <- clean_data_filtered_SJSTEN %>%
+  mutate(jittered_x = concomitant_count + runif(n(), min = -0.2, max = 0.2))  # Small jitter to avoid overlap
+
+# Convert to data frame and plot
+pdp_concomitant_sjs_plot <- ggplot(as.data.frame(pdp_concomitant_sjs), aes(x = concomitant_count, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_concomitant_sjs, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Concomitant Med. Count (SJS-TEN)",
+       x = "Number of Concomitant Medications",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Define PDP for Sex (SJS-TEN)
+pdp_sex_sjs <- partial(
+  object = rf_final_interaction_sjsten, 
+  pred.var = "sex", 
+  train = clean_data_filtered_SJSTEN,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_sex_sjs_plot <- ggplot(as.data.frame(pdp_sex_sjs), aes(x = sex, y = 100 * (1 - yhat), fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_manual(values = c("pink", "lightblue", "lightgreen")) +
+  labs(title = "PDP for Sex (SJS-TEN)",
+       x = "Sex",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Define PDP for Region (SJS-TEN)
+pdp_region_sjs <- partial(
+  object = rf_final_interaction_sjsten, 
+  pred.var = "region", 
+  train = clean_data_filtered_SJSTEN,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_region_sjs_plot <- ggplot(as.data.frame(pdp_region_sjs), aes(x = region, y = 100 * (1 - yhat), fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "PDP for Region (SJS-TEN)",
+       x = "Region",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Print plots
+print(pdp_age_sjs_plot)
+print(pdp_tte_sjs_plot)
+print(pdp_concomitant_sjs_plot)
+print(pdp_sex_sjs_plot)
+print(pdp_region_sjs_plot)
+
+```
+
+Create the metric table:
+
+```{r}
+# Define the metrics
+metrics_sjsten <- data.table(
+  Metric = c("OOB Error/Brier Score", "AUC"),
+  Value = c(round(oob_error_sjsten, 4), round(auc_value_sjsten, 4))
+)
+
+# Convert to a gt table for better visualization
+metric_table_sjsten <- gt(metrics_sjsten) %>%
+  tab_header(title = "Model Performance Metrics (SJS-TEN)") %>%
+  cols_label(
+    Metric = "Metric",
+    Value = "Value"
+  ) %>%
+  fmt_number(columns = Value, decimals = 4) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    heading.title.font.weight = "bold"
+  )
+
+# Print the table
+metric_table_sjsten
+```
+
+Now create the final combined plot
+
+```{r}
+# Combine three PDPs into one vertical column
+pdp_column1_sjsten <- pdp_age_sjs_plot / pdp_concomitant_sjs_plot / pdp_tte_sjs_plot + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+# combine discrete PDPs into one vertical column
+pdp_column2_sjsten <- pdp_region_sjs_plot / pdp_sex_sjs_plot 
+  plot_layout(ncol = 1)
+
+#Combine column 1 and 2 into the left column
+left_column_sjsten <- pdp_column1_sjsten | pdp_column2_sjsten
+
+# Combine heatmap and metric table into the second column
+right_column_sjsten <- pVIVI_sjsten / metric_table_sjsten + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights (more space for heatmap)
+
+# Or we can use the bootstrap VIMP instead of the VIVI plot
+right_column_sjsten_alt <- pVimpBootstrapSJSTEN / metric_table_sjsten + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights
+
+#Combine the figures
+figS10_complete <- left_column_sjsten | right_column_sjsten
+figS10_complete_alt <- left_column_sjsten | right_column_sjsten_alt
+```
+
+###PDP Plots (DRESS)
+
+We'll create the same plots for DRESS
+
+```{r}
+# Define PDP for Age (DRESS)
+pdp_age_dress <- partial(
+  object = rf_final_interaction_dress, 
+  pred.var = "age_yr", 
+  train = clean_data_filtered_DRESS,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Define PDP for TTE (DRESS)
+pdp_tte_dress <- partial(
+  object = rf_final_interaction_dress, 
+  pred.var = "TTE", 
+  train = clean_data_filtered_DRESS,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Define PDP for Concomitant Medications (DRESS)
+pdp_concomitant_dress <- partial(
+  object = rf_final_interaction_dress, 
+  pred.var = "concomitant_count", 
+  train = clean_data_filtered_DRESS,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Add jitter to age values before plotting
+jittered_age_dress <- clean_data_filtered_DRESS %>%
+  mutate(jittered_x = age_yr + runif(n(), min = -0.5, max = 0.5))  # Small jitter to avoid overlap
+
+# Convert age to data frame and plot
+pdp_age_dress_plot <- ggplot(as.data.frame(pdp_age_dress), aes(x = age_yr, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_age_dress, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Age (DRESS)",
+       x = "Age (Years)",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Add jitter to TTE values before plotting
+jittered_tte_dress <- clean_data_filtered_DRESS %>%
+  mutate(jittered_x = TTE + runif(n(), min = -1, max = 1))  # Small jitter to avoid overlap
+
+# Convert TTE to data frame and plot
+pdp_tte_dress_plot <- ggplot(as.data.frame(pdp_tte_dress), aes(x = TTE, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_tte_dress, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for TTE (DRESS)",
+       x = "Time to Event (TTE), Days",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Add jitter to Concomitant Medication Count before plotting
+jittered_concomitant_dress <- clean_data_filtered_DRESS %>%
+  mutate(jittered_x = concomitant_count + runif(n(), min = -0.2, max = 0.2))  # Small jitter to avoid overlap
+
+# Convert concomitant to data frame and plot
+pdp_concomitant_dress_plot <- ggplot(as.data.frame(pdp_concomitant_dress), aes(x = concomitant_count, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_concomitant_dress, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Concomitant Med. Count (DRESS)",
+       x = "Number of Concomitant Medications",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Define PDP for Sex (DRESS)
+pdp_sex_dress <- partial(
+  object = rf_final_interaction_dress, 
+  pred.var = "sex", 
+  train = clean_data_filtered_DRESS,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_sex_dress_plot <- ggplot(as.data.frame(pdp_sex_dress), aes(x = sex, y = 100 * (1 - yhat), fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_manual(values = c("pink", "lightblue", "lightgreen")) +
+  labs(title = "PDP for Sex (DRESS)",
+       x = "Sex",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Define PDP for Region (DRESS)
+pdp_region_dress <- partial(
+  object = rf_final_interaction_dress, 
+  pred.var = "region", 
+  train = clean_data_filtered_DRESS,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_region_dress_plot <- ggplot(as.data.frame(pdp_region_dress), aes(x = region, y = 100 * (1 - yhat), fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "PDP for Region (DRESS)",
+       x = "Region",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Print plots
+print(pdp_age_dress_plot)
+print(pdp_tte_dress_plot)
+print(pdp_concomitant_dress_plot)
+print(pdp_sex_dress_plot)
+print(pdp_region_dress_plot)
+```
+
+Create the metric table:
+
+```{r}
+# Define the metrics
+metrics_dress <- data.table(
+  Metric = c("OOB Error/Brier Score", "AUC"),
+  Value = c(round(oob_error_dress, 4), round(auc_value_dress, 4))
+)
+
+# Convert to a gt table for better visualization
+metric_table_dress <- gt(metrics_dress) %>%
+  tab_header(title = "Model Performance Metrics (DRESS)") %>%
+  cols_label(
+    Metric = "Metric",
+    Value = "Value"
+  ) %>%
+  fmt_number(columns = Value, decimals = 4) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    heading.title.font.weight = "bold"
+  )
+
+# Print the table
+metric_table_dress
+```
+
+Now create the final combined plot
+
+```{r}
+# Combine three PDPs into one vertical column
+pdp_column1_dress <- pdp_age_dress_plot / pdp_concomitant_dress_plot / pdp_tte_dress_plot + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+# Combine discrete PDPs into one vertical column
+pdp_column2_dress <- pdp_region_dress_plot / pdp_sex_dress_plot + 
+  plot_layout(ncol = 1)
+
+# Combine column 1 and 2 into the left column
+left_column_dress <- pdp_column1_dress | pdp_column2_dress
+
+# Combine heatmap and metric table into the second column
+right_column_dress <- pVIVI_dress / metric_table_dress + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights (more space for heatmap)
+
+# Alternative layout with bootstrapped VIMP
+right_column_dress_alt <- pVimpBootstrapDRESS / metric_table_dress + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights (more space for heatmap)
+
+# Combine the figures
+figS11_complete <- left_column_dress | right_column_dress
+figS11_complete_alt <- left_column_dress | right_column_dress_alt
+```
+
+###PDP Plots (AGEP)
+
+We'll generate the same plots for AGEP:
+
+```{r}
+# Define PDP for Age (AGEP)
+pdp_age_agep <- partial(
+  object = rf_final_interaction_agep, 
+  pred.var = "age_yr", 
+  train = clean_data_filtered_AGEP,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Define PDP for TTE (AGEP)
+pdp_tte_agep <- partial(
+  object = rf_final_interaction_agep, 
+  pred.var = "TTE", 
+  train = clean_data_filtered_AGEP,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Define PDP for Concomitant Medications (AGEP)
+pdp_concomitant_agep <- partial(
+  object = rf_final_interaction_agep, 
+  pred.var = "concomitant_count", 
+  train = clean_data_filtered_AGEP,
+  grid.resolution = 100, 
+  prob = TRUE
+)
+
+# Add jitter to age values before plotting
+jittered_age_agep <- clean_data_filtered_AGEP %>%
+  mutate(jittered_x = age_yr + runif(n(), min = -0.5, max = 0.5))  # Small jitter to avoid overlap
+
+# Convert age to data frame and plot
+pdp_age_agep_plot <- ggplot(as.data.frame(pdp_age_agep), aes(x = age_yr, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_age_agep, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Age (AGEP)",
+       x = "Age (Years)",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Add jitter to TTE values before plotting
+jittered_tte_agep <- clean_data_filtered_AGEP %>%
+  mutate(jittered_x = TTE + runif(n(), min = -1, max = 1))  # Small jitter to avoid overlap
+
+# Convert TTE to data frame and plot
+pdp_tte_agep_plot <- ggplot(as.data.frame(pdp_tte_agep), aes(x = TTE, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_tte_agep, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for TTE (AGEP)",
+       x = "Time to Event (TTE), Days",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Add jitter to Concomitant Medication Count before plotting
+jittered_concomitant_agep <- clean_data_filtered_AGEP %>%
+  mutate(jittered_x = concomitant_count + runif(n(), min = -0.2, max = 0.2))  # Small jitter to avoid overlap
+
+# Convert concomitant to data frame and plot
+pdp_concomitant_agep_plot <- ggplot(as.data.frame(pdp_concomitant_agep), aes(x = concomitant_count, y = 100 * (1 - yhat))) +
+  geom_line(color = "black", size = 1) +  # PDP line
+  geom_rug(data = jittered_concomitant_agep, aes(x = jittered_x), 
+           sides = "b", alpha = 0.3, inherit.aes = FALSE) +  # Jittered rug plot
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "PDP for Concomitant Med. Count (AGEP)",
+       x = "Number of Concomitant Medications",
+       y = "Pred. Mortality (%)") +
+  theme_minimal()
+
+# Define PDP for Sex (AGEP)
+pdp_sex_agep <- partial(
+  object = rf_final_interaction_agep, 
+  pred.var = "sex", 
+  train = clean_data_filtered_AGEP,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_sex_agep_plot <- ggplot(as.data.frame(pdp_sex_agep), aes(x = sex, y = 100 * (1 - yhat), fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_manual(values = c("pink", "lightblue", "lightgreen")) +
+  labs(title = "PDP for Sex (AGEP)",
+       x = "Sex",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Define PDP for Region (AGEP)
+pdp_region_agep <- partial(
+  object = rf_final_interaction_agep, 
+  pred.var = "region", 
+  train = clean_data_filtered_AGEP,
+  prob = TRUE
+)
+
+# Convert to data frame and plot
+pdp_region_agep_plot <- ggplot(as.data.frame(pdp_region_agep), aes(x = region, y = 100 * (1 - yhat), fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "PDP for Region (AGEP)",
+       x = "Region",
+       y = "Pred. Mortality (%)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Print plots (Optional)
+print(pdp_age_agep_plot)
+print(pdp_tte_agep_plot)
+print(pdp_concomitant_agep_plot)
+print(pdp_sex_agep_plot)
+print(pdp_region_agep_plot)
+```
+
+Create the metric table:
+
+```{r}
+# Define the metrics
+metrics_agep <- data.table(
+  Metric = c("OOB Error/Brier Score", "AUC"),
+  Value = c(round(oob_error_agep, 4), round(auc_value_agep, 4))
+)
+
+# Convert to a gt table for better visualization
+metric_table_agep <- gt(metrics_agep) %>%
+  tab_header(title = "Model Performance Metrics (AGEP)") %>%
+  cols_label(
+    Metric = "Metric",
+    Value = "Value"
+  ) %>%
+  fmt_number(columns = Value, decimals = 4) %>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(16),
+    heading.title.font.weight = "bold"
+  )
+
+# Print the table
+metric_table_agep
+```
+
+Now create the final combined plot
+
+```{r}
+# Combine three PDPs into one vertical column
+pdp_column1_agep <- pdp_age_agep_plot / pdp_concomitant_agep_plot / pdp_tte_agep_plot + 
+  plot_layout(ncol = 1)  # Stack vertically
+
+# combine discrete PDPs into one vertical column
+pdp_column2_agep <- pdp_region_agep_plot / pdp_sex_agep_plot 
+  plot_layout(ncol = 1)
+
+#Combine column 1 and 2 into the left column
+left_column_agep <- pdp_column1_agep | pdp_column2_agep
+
+# Combine heatmap and metric table into the second column
+right_column_agep <- pVIVI_agep / metric_table_agep + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights (more space for heatmap)
+
+# and the alternative
+right_column_agep_alt <- pVimpBootstrapAGEP / metric_table_agep + 
+  plot_layout(ncol = 1, heights = c(3, 1))  # Adjust heights
+
+#Combine the figures
+figS12_complete <- left_column_agep | right_column_agep
+figS12_complete_alt <- left_column_agep | right_column_agep_alt
+```
+##PERMUTATION TESTING
+
+This is to provide p-values for categorical variables in the mortality dataset. We'll write a function that will find pairwise permutation p-values for each pair of variables in a category.
+
+```{r}
+compute_pairwise_pdp_pvalues <- function(category_var, rf_model, data, num_permutations = 1000) {
+  
+  # Ensure category_var exists in data
+  if (!category_var %in% colnames(data)) {
+    stop(paste("Error: Variable", category_var, "not found in dataset."))
+  }
+
+  # Compute PDP for the categorical variable
+  pdp_data <- partial(
+    object = rf_model, 
+    pred.var = category_var, 
+    train = data,
+    prob = TRUE
+  )
+
+  # Convert PDP data to a data frame
+  pdp_df <- as.data.frame(pdp_data)
+  colnames(pdp_df) <- c("Category", "Predicted_Prob")
+
+  # Extract unique categories
+  categories <- unique(pdp_df$Category)
+
+  # Compute all unique pairwise category comparisons (upper-triangle only)
+  category_pairs <- t(combn(categories, 2))  # Generate all category pairs
+
+  # Compute observed pairwise differences (ALWAYS subtract Category_2 from Category_1)
+  obs_diffs <- numeric(nrow(category_pairs))
+  for (i in 1:nrow(category_pairs)) {
+    cat1 <- category_pairs[i, 1]
+    cat2 <- category_pairs[i, 2]
+    
+    mean_cat1 <- mean(pdp_df$Predicted_Prob[pdp_df$Category == cat1])
+    mean_cat2 <- mean(pdp_df$Predicted_Prob[pdp_df$Category == cat2])
+    
+    obs_diffs[i] <- mean_cat1 - mean_cat2  # Ensure direction: Category_1 - Category_2
+  }
+
+  # Initialize matrix for storing permuted differences
+  permuted_diffs <- matrix(NA, nrow = nrow(category_pairs), ncol = num_permutations)
+
+  # Initialize progress bar
+  pb <- txtProgressBar(min = 0, max = num_permutations, style = 3)
+
+  # Permutation testing loop
+  for (perm in 1:num_permutations) {
+    setTxtProgressBar(pb, perm)  # Update progress bar
+
+    # Shuffle category labels
+    permuted_data <- pdp_df
+    permuted_data$Category <- sample(permuted_data$Category)
+
+    # Compute permuted pairwise differences
+    for (i in 1:nrow(category_pairs)) {
+      cat1 <- category_pairs[i, 1]
+      cat2 <- category_pairs[i, 2]
+      
+      mean_cat1 <- mean(permuted_data$Predicted_Prob[permuted_data$Category == cat1])
+      mean_cat2 <- mean(permuted_data$Predicted_Prob[permuted_data$Category == cat2])
+      
+      permuted_diffs[i, perm] <- mean_cat1 - mean_cat2  # Keep the same order
+    }
+  }
+
+  close(pb)  # Close progress bar
+
+  # Compute one-tailed p-values (alternative hypothesis: observed difference ≥ permuted difference)
+  p_values <- numeric(nrow(category_pairs))
+  perm_mean <- numeric(nrow(category_pairs))
+  perm_sd <- numeric(nrow(category_pairs))
+
+  for (i in 1:nrow(category_pairs)) {
+    p_values[i] <- mean(permuted_diffs[i, ] >= obs_diffs[i])  # One-tailed test
+    perm_mean[i] <- mean(permuted_diffs[i, ])  # Mean of permuted differences
+    perm_sd[i] <- sd(permuted_diffs[i, ])  # Standard deviation of permuted differences
+  }
+
+  # Apply Benjamini-Hochberg correction
+  p_values_bh <- p.adjust(p_values, method = "BH")
+
+  # Return pairwise p-values as a data frame with separate columns for categories
+  pairwise_p_values <- data.frame(
+    Category_1 = category_pairs[, 1],
+    Category_2 = category_pairs[, 2],
+    Observed_Difference = obs_diffs,
+    Permuted_Mean = perm_mean,
+    Permuted_SD = perm_sd,
+    P_Value = p_values,
+    P_Value_BH = p_values_bh  # Benjamini-Hochberg corrected p-values
+  )
+
+  return(pairwise_p_values)
+}
+```
+
+Remember that the RF is predicting living, not death, so the magnitude will be backwards. Now apply it:
+
+```{r}
+# Compute pairwise p-values for categorical variables
+p_values_sex <- compute_pairwise_pdp_pvalues("sex", rf_final_interaction, clean_data_filtered, num_permutations = 10000)
+p_values_region <- compute_pairwise_pdp_pvalues("region", rf_final_interaction, clean_data_filtered, num_permutations = 10000)
+
+# Print results
+print(p_values_sex)
+print(p_values_region)
+```
+
+We'll need a different function for SCAR, since it's a series of booleans.
+
+```{r}
+compute_scar_pdp_pvalues <- function(rf_model, data, num_permutations = 1000) {
+  
+  # Define SCAR conditions
+  scar_types <- c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+  
+  # Initialize list to store PDP results
+  pdp_scar_list <- list()
+
+  # Compute PDPs for each SCAR type
+  for (scar in scar_types) {
+    
+    pdp_result <- partial(
+      object = rf_model,  
+      pred.var = scar,    
+      train = data,     
+      prob = TRUE,        
+      categorical = TRUE  
+    )
+    
+    colnames(pdp_result) <- c("SCAR_Value", "Predicted_Prob")
+    
+    # Keep only SCAR = TRUE (1) results
+    pdp_result <- pdp_result[pdp_result$SCAR_Value == 1, ]
+    
+    # Store SCAR type
+    pdp_result$SCAR_Type <- scar
+    
+    pdp_scar_list[[scar]] <- pdp_result
+  }
+  
+  # Combine PDP results into a single data frame
+  pdp_data_scar <- do.call(rbind, pdp_scar_list)
+  
+  # Convert mortality probability (1 - yhat)
+  pdp_data_scar$Predicted_Prob <- 1 - pdp_data_scar$Predicted_Prob
+  
+  # Compute observed pairwise differences
+  scar_pairs <- t(combn(scar_types, 2))  # Generate pairwise SCAR combinations
+  obs_diffs <- numeric(nrow(scar_pairs))
+
+  for (i in 1:nrow(scar_pairs)) {
+    scar1 <- scar_pairs[i, 1]
+    scar2 <- scar_pairs[i, 2]
+    
+    mean_scar1 <- mean(pdp_data_scar$Predicted_Prob[pdp_data_scar$SCAR_Type == scar1])
+    mean_scar2 <- mean(pdp_data_scar$Predicted_Prob[pdp_data_scar$SCAR_Type == scar2])
+    
+    obs_diffs[i] <- mean_scar1 - mean_scar2  # Difference between SCAR types
+  }
+
+  # Initialize permutation results matrix
+  permuted_diffs <- matrix(NA, nrow = nrow(scar_pairs), ncol = num_permutations)
+
+  # Progress bar
+  pb <- txtProgressBar(min = 0, max = num_permutations, style = 3)
+
+  # Permutation loop
+  for (perm in 1:num_permutations) {
+    setTxtProgressBar(pb, perm)  
+
+    # Shuffle SCAR labels
+    permuted_data <- pdp_data_scar
+    permuted_data$SCAR_Type <- sample(permuted_data$SCAR_Type)
+
+    # Compute permuted pairwise differences
+    for (i in 1:nrow(scar_pairs)) {
+      scar1 <- scar_pairs[i, 1]
+      scar2 <- scar_pairs[i, 2]
+      
+      mean_scar1 <- mean(permuted_data$Predicted_Prob[permuted_data$SCAR_Type == scar1])
+      mean_scar2 <- mean(permuted_data$Predicted_Prob[permuted_data$SCAR_Type == scar2])
+      
+      permuted_diffs[i, perm] <- mean_scar1 - mean_scar2  # Keep order
+    }
+  }
+
+  close(pb)
+
+  # Compute one-tailed p-values (obs_diff ≥ permuted)
+  p_values <- numeric(nrow(scar_pairs))
+  perm_mean <- numeric(nrow(scar_pairs))
+  perm_sd <- numeric(nrow(scar_pairs))
+
+  for (i in 1:nrow(scar_pairs)) {
+    p_values[i] <- mean(permuted_diffs[i, ] >= obs_diffs[i])
+    perm_mean[i] <- mean(permuted_diffs[i, ])
+    perm_sd[i] <- sd(permuted_diffs[i, ])
+  }
+
+  # Apply Benjamini-Hochberg correction
+  p_values_bh <- p.adjust(p_values, method = "BH")
+
+  # Return pairwise p-values as a data frame
+  pairwise_p_values <- data.frame(
+    SCAR_1 = scar_pairs[, 1],
+    SCAR_2 = scar_pairs[, 2],
+    Observed_Difference = obs_diffs,
+    Permuted_Mean = perm_mean,
+    Permuted_SD = perm_sd,
+    P_Value = p_values,
+    P_Value_BH = p_values_bh  # Adjusted p-value
+  )
+
+  return(pairwise_p_values)
+}
+```
+
+Let's run it!
+
+```{r}
+# Compute permutation p-values for SCAR-type PDP comparisons
+p_values_scar <- compute_scar_pdp_pvalues(rf_final_interaction, clean_data_filtered, 1000)
+print(p_values_scar)
+```
+
+Very good. Now we can permutation-test for the SCAR-specific RFs
+
+```{r}
+# Compute permutation p-values for SEX in each SCAR-specific RF
+p_values_sex_sjsten <- compute_pairwise_pdp_pvalues("sex", rf_final_interaction_sjsten, clean_data_filtered_SJSTEN, 1000)
+print(p_values_sex_sjsten)
+
+p_values_sex_dress <- compute_pairwise_pdp_pvalues("sex", rf_final_interaction_dress, clean_data_filtered_DRESS, 1000)
+print(p_values_sex_dress)
+
+p_values_sex_agep <- compute_pairwise_pdp_pvalues("sex", rf_final_interaction_agep, clean_data_filtered_AGEP, 1000)
+print(p_values_sex_agep)
+
+# Compute permutation p-values for REGION in each SCAR-specific RF
+p_values_region_sjsten <- compute_pairwise_pdp_pvalues("region", rf_final_interaction_sjsten, clean_data_filtered_SJSTEN, 1000)
+print(p_values_region_sjsten)
+
+p_values_region_dress <- compute_pairwise_pdp_pvalues("region", rf_final_interaction_dress, clean_data_filtered_DRESS, 1000)
+print(p_values_region_dress)
+
+p_values_region_agep <- compute_pairwise_pdp_pvalues("region", rf_final_interaction_agep, clean_data_filtered_AGEP, 1000)
+print(p_values_region_agep)
+```

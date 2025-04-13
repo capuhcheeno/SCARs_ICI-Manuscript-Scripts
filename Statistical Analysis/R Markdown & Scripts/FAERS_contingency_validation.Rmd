@@ -1,0 +1,411 @@
+---
+title: "FAERS Processing"
+output:
+  html_document:
+    df_print: paged
+---
+
+##INTRODUCTION
+
+```{r}
+library(readr)
+library(data.table)
+library(methods)
+library(tinytex)
+library(microbenchmark)
+```
+
+After pre-processing the FAERS quarterly reports, deduplicating them, and mapping the drugs and outcomes to standardized vocabulary (using AEOLUS and some manual methods if necessary), the code in this markdown ensures that the contingency tables are being calculated correctly.
+
+##DATA IMPORT
+
+
+To process FAERS data, we need two tables in particular - the standard_case_drug.csv 
+table and the standard_case_outcome.csv (from the AEOLUS output). We'll load them:
+
+```{r}
+standard_case_drug <- read_csv("sanitized_drug_data.csv")
+standard_case_outcome <- read_csv("sanitized_outcome_data.csv")
+```
+
+Lets see how this data looks:
+
+```{r}
+head(standard_case_drug)
+head(standard_case_outcome)
+```
+
+##RANDOM SUBSETTING
+
+We will define a function to randomly subset patients from drug and outcome data. This will be useful later.
+
+```{r}
+# Define the S4 class "Random_FAERS_Sample"
+setClass("Random_FAERS_Sample",
+         slots = c(
+           compositeid_list = "list",
+           drug_data_subset = "data.table",
+           outcome_data_subset = "data.table"
+         ))
+
+#Define the function
+subset_random_patients <- function(drug_data, outcome_data, n) {
+    # Ensure the data is in data.table format
+    drug_data <- as.data.table(drug_data)
+    outcome_data <- as.data.table(outcome_data)
+    
+    # Step 1: Identify Common Unique Patients
+    common_patients <- intersect(unique(drug_data$compositeid), unique(outcome_data$compositeid))
+    
+    # Step 2: Subset n Random Patients
+    if (length(common_patients) < n) {
+        stop("Requested number of patients exceeds the available common patients.")
+    }
+    
+    random_patients <- sample(common_patients, n)
+    
+    # Step 3: Subset the drug_data and outcome_data based on random_patients
+    drug_data_subset <- drug_data[compositeid %in% random_patients]
+    outcome_data_subset <- outcome_data[compositeid %in% random_patients]
+    
+    # Step 4: Create the S4 object
+    random_sample <- new("Random_FAERS_Sample",
+                         compositeid_list = list(random_patients),
+                         drug_data_subset = drug_data_subset,
+                         outcome_data_subset = outcome_data_subset)
+    
+    return(random_sample)
+}
+```
+
+This function returns an S4 object containing a random sample of patients, with the associated portions of the drug and outcome tables. This will allow us to select smaller portions of the dataset to test any future algorithms on.
+
+Note that the way the function selects from the input is by randomly selecting a subset of patient IDs (compositeids) - this way the data should be internally consistent when we create contingency tables and so on.
+
+##CONTINGENCY TABLES
+
+Now to design the script to create contingency tables. Note that this is what an ADE contingency table looks like:
+
+![](A-22-contingency-table-for-disproportionality-analysis.png)
+
+Note the following definitions:
+
+a - the number of patients exposed to the drug that get the outcome
+
+b - the number of patients exposed to the drug that DONT get the outcome
+
+c - the number of patients NOT exposed to the drug that get the outcome
+
+d - the numer of patients NOT exposed to the drug that DONT get the outcome
+
+Note that a particular ugly part of this data is that not every patient ID has both drugs and outcomes. In other words, some of the patient IDs in the drugs table do not appear in the outcomes table, and vice versa. So the total number of patients is the intersection of patient IDs between the drugs table and outcomes table.
+
+After computing a, there are two ways to proceed to compute b, c, d. I will group them thus:
+
+- The **set theory method**. Use intersection and union operations to calculate b, c, and d. For example, b is the intersection of the list of unique patients exposed to the the drug with the list of unique patients NOT having the outcome. d would be the intersection between the patients not exposed to the drug and not having the outcome.
+
+- The **calculated method**. After calculating a, use math to find the others. b would be the difference between a and all patients exposed to the drug. c would be the difference between a and all patients with the particular outcome. d would be equal to the total number of patients minus a+b+c
+
+The calculated method is much faster, empirically. However, this data is pretty ugly, so we want to make sure these two methods line up. Because conducting the set theory method on the entire dataset would take years of computation, we will subset 100 patients and compare these two counting methods. 
+
+```{r}
+sample_100 <- subset_random_patients(drug_data = updated_drug_data, outcome_data = updated_outcome_data, n = 100)
+```
+
+And a series of procedures to count the data and validate it: 
+
+```{r}
+# Step 1: Identify Common Unique Patients
+print("Step 1: Identifying common unique patients.")
+drug_data <- as.data.table(sample_100@drug_data_subset)[, .(compositeid, drug_concept_id)]
+outcome_data <- as.data.table(sample_100@outcome_data_subset)[, .(compositeid, outcome_concept_id)]
+
+# Find the intersection of patient IDs in both datasets
+common_patients <- intersect(unique(drug_data$compositeid), unique(outcome_data$compositeid))
+
+# Filter drug_data and outcome_data to include only common patients
+drug_data <- drug_data[compositeid %in% common_patients]
+outcome_data <- outcome_data[compositeid %in% common_patients]
+
+# Step 2: Identify Unique Patients Exposed to Each Drug
+print("Step 2: Identifying unique patients exposed to each drug.")
+exposed_sets <- drug_data[, .(exposed = list(unique(compositeid))), by = drug_concept_id]
+
+# Step 3: Identify Unique Patients with Each Outcome
+print("Step 3: Identifying unique patients with each outcome.")
+with_outcome_sets <- outcome_data[, .(with_outcome = list(unique(compositeid))), by = outcome_concept_id]
+
+# Memory management: Remove intermediate data and run garbage collection
+rm(drug_data, outcome_data)
+gc()
+
+# Step 4: Create a Cartesian product of all unique drugs and outcomes
+print("Step 4: Creating Cartesian product of all unique drugs and outcomes.")
+unique_drugs <- unique(exposed_sets$drug_concept_id)
+unique_outcomes <- unique(with_outcome_sets$outcome_concept_id)
+all_drug_outcome_pairs <- CJ(drug = unique_drugs, outcome = unique_outcomes)
+
+# Memory management: Remove intermediate objects no longer needed
+rm(unique_drugs, unique_outcomes)
+gc()
+
+# Step 5: Calculate and Validate Contingency Table Values
+print("Step 5: Calculating and validating contingency table values using set operations.")
+
+contingency_table <- all_drug_outcome_pairs[, {
+  
+  # Ensure drug and outcome exist in their respective sets
+  exposed <- if (nrow(exposed_sets[drug_concept_id == drug]) > 0) {
+    exposed_sets[drug_concept_id == drug, exposed][[1]]
+  } else {
+    character(0)  # Empty set if no patients with this drug
+  }
+  
+  with_outcome <- if (nrow(with_outcome_sets[outcome_concept_id == outcome]) > 0) {
+    with_outcome_sets[outcome_concept_id == outcome, with_outcome][[1]]
+  } else {
+    character(0)  # Empty set if no patients with this outcome
+  }
+  
+  # Calculate a, b, c, d
+  a <- length(intersect(exposed, with_outcome))
+  b <- length(setdiff(exposed, with_outcome))
+  c <- length(setdiff(with_outcome, exposed))
+  d <- length(setdiff(common_patients, union(exposed, with_outcome)))
+  
+  # Validate the contingency table
+  valid_a_b <- (a + b == length(exposed))
+  valid_a_c <- (a + c == length(with_outcome))
+  valid_a_b_c_d <- (a + b + c + d == length(common_patients))
+  
+  .(a = a, b = b, c = c, d = d, valid_a_b = valid_a_b, valid_a_c = valid_a_c, valid_a_b_c_d = valid_a_b_c_d)
+}, by = .(drug, outcome)]
+
+# Print the first few rows of the contingency table for review
+print(head(contingency_table))
+
+# Final memory cleanup
+rm(all_drug_outcome_pairs, exposed_sets, with_outcome_sets)
+gc()
+
+```
+
+Perfect. Now lets ensure that all the validation columns are TRUE:
+
+```{r}
+#List all the validation results in one list
+validation <- c(contingency_table$valid_a_b, contingency_table$valid_a_c, contingency_table$valid_a_b_c_d)
+
+#This should return zero (counting the number of false entries)
+length(validation[validation==FALSE])
+
+
+# Define the S4 class "DrugOutcomeResult"
+setClass("DrugOutcomeResult",
+         slots = c(
+           contingency_table = "data.table",
+           drug_patient_count = "data.table",
+           outcome_patient_count = "data.table",
+           roles_included = "character",
+           total_patients = "numeric"
+         ))
+```
+Lets define several functions:
+
+- Calculate contingency tables (filtering for role as desired)
+
+- Count the number of times a given drug appears in a role or combination of roles (IEP check)
+
+First the contingency table function
+```{r}
+# Function to create contingency table from drug and outcome data for specific roles
+create_contingency_table <- function(drug_data, outcome_data, roles = c("PS", "SS", "C", "I")) {
+  
+  # Step 1: Filter the drug data based on the selected roles and keep necessary columns
+  drug_data <- as.data.table(drug_data)[role_cod %in% roles, .(compositeid, drug_concept_id, role_cod)]
+  outcome_data <- as.data.table(outcome_data)[, .(compositeid, outcome_concept_id)]
+  
+  # Step 2: Identify IDs that are present in both drug_data and outcome_data
+  common_ids <- intersect(drug_data$compositeid, outcome_data$compositeid)
+  
+  # Step 3: Filter both tables to include only these common IDs
+  drug_data <- drug_data[compositeid %in% common_ids]
+  outcome_data <- outcome_data[compositeid %in% common_ids]
+  
+  # Step 4: Get the total number of unique patients after filtering
+  total_patients <- uniqueN(common_ids)
+  
+  # Step 5: Get unique drugs and outcomes
+  unique_drugs <- unique(drug_data$drug_concept_id)
+  unique_outcomes <- unique(outcome_data$outcome_concept_id)
+  
+  # Step 6: Create a Cartesian product of all unique drugs and outcomes
+  all_drug_outcome_pairs <- CJ(drug = unique_drugs, outcome = unique_outcomes)
+  
+  # Step 7: Merge the two data tables based on the compositeid to get the drug-outcome pairs
+  merged_data <- merge(drug_data, outcome_data, by = "compositeid", allow.cartesian = TRUE)
+  
+  # Step 8: Count the number of unique patients for each drug-outcome pair (a)
+  drug_outcome_frequency <- merged_data[, .(a = uniqueN(compositeid)), by = .(drug_concept_id, outcome_concept_id)]
+  
+  # Step 9: Rename the columns for better readability
+  setnames(drug_outcome_frequency, c("drug_concept_id", "outcome_concept_id", "a"), c("drug", "outcome", "a"))
+  
+  # Step 10: Merge with the Cartesian product to include all possible pairs
+  expanded_drug_outcome_frequency <- merge(all_drug_outcome_pairs, drug_outcome_frequency, by = c("drug", "outcome"), all.x = TRUE)
+  
+  # Step 11: Replace NA frequencies with 0
+  expanded_drug_outcome_frequency[is.na(a), a := 0]
+  
+  # Step 12: Calculate the total number of unique patients exposed to each drug (for b calculation)
+  expanded_drug_outcome_frequency <- merge(expanded_drug_outcome_frequency, drug_data[, .(total_drug_patients = uniqueN(compositeid)), by = drug_concept_id], by.x = "drug", by.y = "drug_concept_id", all.x = TRUE)
+  
+  # Step 13: Calculate the total number of unique patients with each outcome (for c calculation)
+  expanded_drug_outcome_frequency <- merge(expanded_drug_outcome_frequency, outcome_data[, .(total_outcome_patients = uniqueN(compositeid)), by = outcome_concept_id], by.x = "outcome", by.y = "outcome_concept_id", all.x = TRUE)
+  
+  # Step 14: Calculate b, c, d using sequential logic
+  expanded_drug_outcome_frequency[, b := total_drug_patients - a]
+  expanded_drug_outcome_frequency[, c := total_outcome_patients - a]
+  expanded_drug_outcome_frequency[, d := total_patients - (a + b + c)]
+  
+  # Step 15: Clean up unnecessary columns
+  expanded_drug_outcome_frequency[, `:=`(total_drug_patients = NULL, total_outcome_patients = NULL)]
+  
+  # Return the resulting contingency table
+  return(expanded_drug_outcome_frequency)
+}
+```
+
+Second, the IEP check
+
+```{r}
+# Function to count drug roles and perform IEP validation
+count_drug_roles_and_ie_check <- function(drug_data) {
+  # Count the number of unique patients receiving each drug in each role and combination of roles using intersections
+  drug_patient_count <- drug_data[, .(
+    PS = length(unique(compositeid[role_cod == "PS"])),
+    SS = length(unique(compositeid[role_cod == "SS"])),
+    C = length(unique(compositeid[role_cod == "C"])),
+    I = length(unique(compositeid[role_cod == "I"])),
+    PS_SS = length(intersect(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "SS"]))),
+    PS_C = length(intersect(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "C"]))),
+    PS_I = length(intersect(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "I"]))),
+    SS_C = length(intersect(unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "C"]))),
+    SS_I = length(intersect(unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "I"]))),
+    C_I = length(intersect(unique(compositeid[role_cod == "C"]), unique(compositeid[role_cod == "I"]))),
+    PS_SS_C = length(Reduce(intersect, list(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "C"])))),
+    PS_SS_I = length(Reduce(intersect, list(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "I"])))),
+    PS_C_I = length(Reduce(intersect, list(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "C"]), unique(compositeid[role_cod == "I"])))),
+    SS_C_I = length(Reduce(intersect, list(unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "C"]), unique(compositeid[role_cod == "I"])))),
+    PS_SS_C_I = length(Reduce(intersect, list(unique(compositeid[role_cod == "PS"]), unique(compositeid[role_cod == "SS"]), unique(compositeid[role_cod == "C"]), unique(compositeid[role_cod == "I"])))),
+    Any = uniqueN(compositeid)
+  ), by = drug_concept_id]
+  
+  # Validate the Any count using the Inclusion-Exclusion Principle (IEP)
+  drug_patient_count[, IEP_check := PS + SS + C + I 
+                     - (PS_SS + PS_C + PS_I + SS_C + SS_I + C_I) 
+                     + (PS_SS_C + PS_SS_I + PS_C_I + SS_C_I) 
+                     - PS_SS_C_I]
+  
+  drug_patient_count[, IEP_valid := Any == IEP_check]
+  
+  # Return the resulting table with drug role counts and IEP validation
+  return(drug_patient_count)
+}
+```
+
+Then, we'll create a wrapper function that returns an S4 object:
+
+```{r}
+# Wrapper function around drug_patient_count and contingency table creation
+process_drug_outcome_data <- function(drug_data, outcome_data, roles = c("PS", "SS", "C", "I")) {
+  
+  # Step 1: Count drug roles and perform IEP check
+  drug_patient_count <- count_drug_roles_and_ie_check(drug_data)
+  
+  # Step 2: Create the contingency table using selected roles
+  contingency_table <- create_contingency_table(drug_data, outcome_data, roles)
+  
+  # Step 3: Calculate the total number of unique patients with each outcome
+  outcome_patient_count <- outcome_data[, .(total_outcome_patients = uniqueN(compositeid)), by = outcome_concept_id]
+  
+  # Step 4: Get the total number of unique patients from the common set of drug and outcome data
+  common_ids <- intersect(drug_data$compositeid, outcome_data$compositeid)
+  total_patients <- uniqueN(common_ids)
+  
+  # Step 5: Create an instance of the S4 class "DrugOutcomeResult" to store the result and parameters
+  result <- new("DrugOutcomeResult",
+                contingency_table = contingency_table,
+                drug_patient_count = drug_patient_count,
+                outcome_patient_count = outcome_patient_count,
+                roles_included = roles,
+                total_patients = total_patients)
+  
+  # Return the S4 object
+  return(result)
+}
+```
+
+
+Lets benchmark this function using three samples - with 100, 10K, and 100K patients. We already have the 100. Lets grab the other two:
+
+```{r}
+sample_10K <- subset_random_patients(drug_data = updated_drug_data, outcome_data = updated_outcome_data, n = 10000)
+sample_100K <- subset_random_patients(drug_data = updated_drug_data, outcome_data = updated_outcome_data, n = 100000)
+```
+
+We'll use the microbenchmark package to see how this goes.
+
+```{r}
+# Run the microbenchmark for each sample
+benchmark_results <- microbenchmark(
+  sample_100_S4 = process_drug_outcome_data(sample_100@drug_data_subset, sample_100@outcome_data_subset),
+  sample_10K_S4 = process_drug_outcome_data(sample_10K@drug_data_subset, sample_10K@outcome_data_subset),
+  sample_100K_S4 = process_drug_outcome_data(sample_100K@drug_data_subset, sample_100K@outcome_data_subset),
+  times = 10  # You can adjust the number of repetitions
+)
+
+# Print the benchmarking results
+summary(benchmark_results)
+
+```
+
+Now we can apply it to our main data:
+
+```{r}
+FAERS_output <- process_drug_outcome_data(drug_data = updated_drug_data, outcome_data = updated_outcome_data)
+```
+
+Excellent, now we have the output. Let's look into the IEP check on the roles:
+
+```{r}
+length(FAERS_output@drug_patient_count$IEP_check[FAERS_output@drug_patient_count$IEP_check == FALSE])
+```
+
+Works really well. The contingency table and roles table passed internal checks. One final test - lets make sure the contingency table for the sample_100 is the same with both algorithms. 
+
+```{r}
+sample_100_contingency_old <- contingency_table[,c(1:6)]
+sample_100_contingency_new <- process_drug_outcome_data(sample_100@drug_data_subset, sample_100@outcome_data_subset)
+
+
+# Step 1: Sort both data tables by 'drug' and 'outcome' to align the rows
+setkey(sample_100_contingency_old, drug, outcome)
+setkey(sample_100_contingency_new@contingency_table, drug, outcome)
+
+# Step 2: Reorder columns in sample_100_contingency_new@contingency_table to match dt1
+sample_100_contingency_new@contingency_table <- sample_100_contingency_new@contingency_table[, names(sample_100_contingency_old), with = FALSE]
+
+# Step 3: Compare the data.tables
+comparison_result <- all.equal(sample_100_contingency_old, sample_100_contingency_new@contingency_table)
+
+# Step 4: Print the result of the comparison
+if (isTRUE(comparison_result)) {
+  print("The drug-outcome pairs give the same numbers in both tables.")
+} else {
+  print("The tables differ:")
+  print(comparison_result)
+}
+```
+
+Incredible! Everything works. 

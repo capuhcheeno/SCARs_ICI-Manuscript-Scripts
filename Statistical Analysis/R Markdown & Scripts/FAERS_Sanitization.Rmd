@@ -1,0 +1,508 @@
+---
+title: "FAERS_AEOLUS_Sanitization"
+author: "Eric Mukherjee"
+date: "2024-12-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(readr)
+library(dplyr)
+```
+
+##INTRODUCTION
+
+This document details how the standard_case_outcome and standard_case_drug outputs are sanitized. This requires manipulation both within and outside of R.
+
+##OUTCOME SANITIZATION
+
+```{r}
+#Import standard_case_outcome
+standard_case_outcome <- read_csv("standard_case_outcome.csv")
+head(standard_case_outcome)
+```
+
+Now we count NA entries in the relevant columns:
+
+```{r}
+sum(is.na(standard_case_outcome$outcome_concept_id))
+sum(is.na(standard_case_outcome$pt))
+```
+
+It appears that there are 598 rows in outcome_concept_id that do not match to their outcome in English. Lets see what those outcomes are.
+
+```{r}
+outcomes_unmapped <- unique(standard_case_outcome[is.na(standard_case_outcome$outcome_concept_id),]$pt)
+print(outcomes_unmapped)
+```
+
+These unmatched outcomes were exported and manually matched. After that, we can re-import:
+
+```{r}
+standard_case_outcome_PERFECT <- read.csv("standard_case_outcome_PERFECT.txt")
+```
+
+A quick check confirms that all rows are mapped. Now we will create two files - a dictionary of outcomes, and a version of the outcome table without extraneous columns. 
+
+First, we'll need a function to combine isr and primaryid into one type of id - the compositeid.
+
+```{r}
+# Function to create compositeids based on primaryid and isr, with NA handling
+create_compositeid <- function(data) {
+    # Ensure data is a data.table
+    data <- as.data.table(data)
+    
+    # Check if both primaryid and isr columns exist
+    if ("primaryid" %in% names(data) & "isr" %in% names(data)) {
+        # Create compositeid using primaryid if it's not NA, otherwise use isr
+        data[, compositeid := ifelse(!is.na(primaryid), paste0("pid.", primaryid), paste0("isr.", isr))]
+    
+    # If only primaryid exists
+    } else if ("primaryid" %in% names(data)) {
+        data[, compositeid := paste0("pid.", primaryid)]
+    
+    # If only isr exists
+    } else if ("isr" %in% names(data)) {
+        data[, compositeid := paste0("isr.", isr)]
+    
+    # If neither column exists, throw an error
+    } else {
+        stop("Neither 'primaryid' nor 'isr' columns found in the data.")
+    }
+    
+    # Return the updated data table
+    return(data)
+}
+```
+
+Now create a dictionary of outcomes and sanitize the table
+
+```{r}
+#Create outcome dictionary
+outcome_dictionary <- unique(data.frame(outcome_concept_id = standard_case_outcome_PERFECT$outcome_concept_id, pt = standard_case_outcome_PERFECT$pt))
+
+#Create compositeid in outcome table
+sanitized_outcome_data <- create_compositeid(standard_case_outcome_PERFECT)
+
+#Remove superfluous columns from outcome data
+sanitized_outcome_data$primaryid <- NULL
+sanitized_outcome_data$isr <- NULL
+sanitized_outcome_data$snomed_outcome_concept_id <- NULL
+gc()
+
+#Save these files
+write.csv(sanitized_outcome_data, "sanitized_outcome_data.csv", row.names = FALSE)
+write.csv(outcome_dictionary, "sanitized_outcome_dictionary.csv", row.names = FALSE)
+```
+
+##DRUG SANITIZATION
+
+There are some drugs that failed to map. 
+
+```{r}
+# Import Drug and Outcome Data
+standard_case_drug <- read_csv("standard_case_drug_with_name.csv")
+
+# Give it a composite ID
+standard_case_drug <- create_compositeid(standard_case_drug)
+
+#Remove superfluous columns from drug data
+standard_case_drug$primaryid <- NULL
+standard_case_drug$isr <- NULL
+```
+
+Let's check to see how well the drug names are mapped:
+
+```{r}
+# Number of rows with NA
+sum(is.na(standard_case_drug$drug_name))
+```
+
+So there are 808310 rows without a drug name. Lets collapse this down:
+
+```{r}
+# We'll create a drug dictionary and then determine how many names are missing
+drug_dictionary <- unique(data.frame(drug_concept_id = standard_case_drug$drug_concept_id, drug_name = standard_case_drug$drug_name))
+
+# Isolate the missing drugs 
+missing_drugs <- drug_dictionary[is.na(drug_dictionary$drug_name),]
+
+# Isolate the rows with missing drugs
+missing_drugs <- drug_dictionary[is.na(drug_dictionary$drug_name),]
+missing_drug_name_rows <- standard_case_drug[is.na(standard_case_drug$drug_name),]
+```
+
+There are 1780 missing drugs. We will export the dictionary and missing rows and manually fix it, then re-import and add that back in.
+
+```{r}
+# Export the rows with missing drugs, and the missing drugs
+write.csv(missing_drugs, "manual_drug_mapping/missing_drugs.csv",row.names = FALSE)
+write.csv(missing_drug_name_rows, "manual_drug_mapping/missing_drug_name_rows.csv", row.names = FALSE)
+```
+
+After digging back through the output files, we can map all of the drug_concept_ids to a drug (sometimes with a strange name, but it still works - mostly they're combination drugs or herbal supplements, that kind of thing). We can import it back in.
+
+```{r}
+#Import updated drug dictionary
+Updated_Drug_Dictionary <- read_csv("Updated_Drug_Dictionary.csv")
+Updated_Drug_Dictionary <- data.table(Updated_Drug_Dictionary)
+```
+
+We'll delete the drug_names column so it can be replaced later
+
+```{r}
+#update the drug table
+standard_case_drug$drug_name <- NULL
+```
+
+There is one small inconsistency that will need fixing (particularly for our interest in SCAR). There are separate drug_concept_ids for "piperacillin / tazobactam Injection" (46275426) and "piperacillin / tazobactam Injectable Solution" (40077118). We will change all instances of 40077118 to 46275426
+
+```{r}
+#Update all instances of drug_concept_id 40077118 to 46275426
+standard_case_drug[drug_concept_id == 40077118, drug_concept_id := 46275426]
+```
+
+For other purposes, we'll fix the dictionary as well so that both of these drug_concept_ids refer to the same thing.
+
+```{r}
+Updated_Drug_Dictionary[, "drug_name" := gsub("piperacillin / tazobactam Injectable Solution", "piperacillin / tazobactam Injection", drug_name, ignore.case = TRUE)]
+write.csv(Updated_Drug_Dictionary, "Updated_Drug_Dictionary_Fullnames.csv", row.names = FALSE)
+```
+
+We also need to fix the dictionary for a few long names:
+
+```{r}
+Updated_Drug_Dictionary <- data.table(Updated_Drug_Dictionary)
+
+# First, we shorten some drug names
+Updated_Drug_Dictionary[, drug_name := gsub("sulfamethoxazole / trimethoprim", "TMP / SMX", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("piperacillin / tazobactam", "pip / tazo", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("hydrochlorothiazide", "HCTZ", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("ampicillin / sulbactam", "amp / sul", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("amoxicillin / clavulanate", "amox / clav", drug_name, ignore.case = TRUE)]
+
+# Abbreviate some administration routes - these are not present in most entries
+Updated_Drug_Dictionary[, drug_name := gsub("Oral Tablet", "Oral", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Oral Suspension", "Oral", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Oral Capsule", "Oral", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Oral Solution", "Oral", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Injection", "Inj", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Injectable Solution", "Inj", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Injectable Suspension", "Inj", drug_name, ignore.case = TRUE)]
+Updated_Drug_Dictionary[, drug_name := gsub("Extended Release", "ER", drug_name, ignore.case = TRUE)]
+```
+
+Then, merge the names from the final dictionary into a finally sanitized drug_data table:
+
+```{r}
+# merge with dictionary for new names
+sanitized_drug_data <- merge(standard_case_drug, Updated_Drug_Dictionary, by = "drug_concept_id", all.x = TRUE)
+```
+
+Now sanitized_drug_data can be used for future projects.
+
+```{r}
+write.csv(sanitized_drug_data, file = "sanitized_drug_data.csv", row.names = FALSE)
+write.csv(Updated_Drug_Dictionary, file = "drug_dictionary.csv", row.names = FALSE)
+```
+
+##DEMOGRAPHICS SANITIZATION
+
+First, import the DEMO and DEMO_Legacy table
+
+```{r}
+DEMO_Legacy <- read_csv("DEMO Legacy.csv")
+DEMO <- read_csv("DEMO.csv")
+```
+
+The two tables have slightly different formats, which we will harmonize during sanitization.
+
+```{r}
+# Add compositeid
+DEMO_legacy_compositeid <- create_compositeid(DEMO_Legacy)
+DEMO_compositeid <- create_compositeid(DEMO)
+DEMO_legacy_compositeid <- as.data.table(DEMO_legacy_compositeid)
+DEMO_compositeid <- as.data.table(DEMO_compositeid)
+
+## The following steps with sanitize both DEMO and DEMO_legacy before combining them into one table
+
+# Subset the useful columns
+# From the DEMO column, we'll pull the caseversion, pare the table down to the latest caseversion to eliminate duplicates.
+DEMO_pared <- data.table(compositeid = DEMO_compositeid$compositeid, caseversion = DEMO_compositeid$caseversion, age = DEMO_compositeid$age, age_cod = DEMO_compositeid$age_cod, sex = DEMO_compositeid$sex, reporter_country = DEMO_compositeid$reporter_country, occr_country = DEMO_compositeid$occr_country, event_dt = DEMO_compositeid$event_dt, fda_dt = DEMO_compositeid$fda_dt, rept_dt = DEMO_compositeid$rept_dt, filename = DEMO_compositeid$filename)
+
+# Filter rows with the highest caseversion for each compositeid
+DEMO_pared_filtered <- DEMO_pared %>%
+  group_by(compositeid) %>%                      # Group by compositeid
+  slice_max(caseversion, with_ties = FALSE) %>%  # Keep the highest caseversion (no ties)
+  ungroup()                                      # Remove grouping
+
+# Remove the caseversion column
+DEMO_pared_filtered$caseversion <- NULL
+
+# Combine age and age_cod into age_yr, accounting for all age codes
+# This standardizes ages into years
+DEMO_pared_filtered <- DEMO_pared_filtered %>%
+  mutate(
+    age_yr = case_when(
+      is.na(age) ~ NA_real_,                     # Keep NA if age is missing
+      is.na(age_cod) | age_cod == "YR" ~ age,    # Default to years if age_cod is missing
+      age_cod == "MON" ~ age / 12,               # Months to years
+      age_cod == "WK"  ~ age / 52.1775,          # Weeks to years
+      age_cod == "DY"  ~ age / 365,              # Days to years
+      age_cod == "HR"  ~ age / (365 * 24),       # Hours to years
+      age_cod == "MIN" ~ age / (365 * 24 * 60),  # Minutes to years
+      age_cod == "SEC" ~ age / (365 * 24 * 60 * 60), # Seconds to years
+      age_cod == "DEC" ~ age * 10,               # Decades to years
+      TRUE ~ NA_real_                            # Invalid codes default to NA
+    )
+  )
+
+# Remove the age and age_cod columns
+DEMO_pared_filtered$age <- NULL
+DEMO_pared_filtered$age_cod <- NULL
+
+# Now we have to harmonize the reporter_country and occr_country columns
+# Create a new column called "country", which copies occr_country if available, otherwise copies reporter_country
+DEMO_pared_filtered <- DEMO_pared_filtered %>%
+  mutate(
+    country = ifelse(!is.na(occr_country), occr_country, reporter_country)  # Use occr_country if available
+  )
+
+#Remove the country columns
+DEMO_pared_filtered$reporter_country <- NULL
+DEMO_pared_filtered$occr_country<-NULL
+
+
+## Now we do the same transformations on DEMO_legacy. It only has one country column, and instead of caseversion, it has CASE. Otherwise it's essentially the same.
+# Subset columns from legacy data
+DEMO_legacy_pared <- data.table(compositeid = DEMO_legacy_compositeid$compositeid, caseversion = DEMO_legacy_compositeid$CASE,age = DEMO_legacy_compositeid$age, age_cod = DEMO_legacy_compositeid$age_cod, sex = DEMO_legacy_compositeid$gndr_cod, country = DEMO_legacy_compositeid$reporter_country, event_dt = DEMO_legacy_compositeid$event_dt, fda_dt = DEMO_legacy_compositeid$fda_dt, rept_dt = DEMO_legacy_compositeid$rept_dt, filename = DEMO_legacy_compositeid$filename)
+
+
+# Filter rows with the highest caseversion for each compositeid
+DEMO_legacy_pared <- DEMO_legacy_pared %>%
+  group_by(compositeid) %>%                      # Group by compositeid
+  slice_max(caseversion, with_ties = FALSE) %>%  # Keep the highest caseversion (no ties)
+  ungroup()                                      # Remove grouping
+
+# Remove caseversion column
+DEMO_legacy_pared$caseversion <- NULL
+
+# Process DEMO_legacy_pared to create age_yr
+DEMO_legacy_pared <- DEMO_legacy_pared %>%
+  mutate(
+    # Harmonize ages based on age_cod
+    age_yr = case_when(
+      is.na(age) ~ NA_real_,                     # Keep NA if age is missing
+      is.na(age_cod) | age_cod == "YR" ~ age,    # Default to years if age_cod is missing
+      age_cod == "MON" ~ age / 12,               # Months to years
+      age_cod == "WK"  ~ age / 52.1775,          # Weeks to years
+      age_cod == "DY"  ~ age / 365,              # Days to years
+      age_cod == "HR"  ~ age / (365 * 24),       # Hours to years
+      age_cod == "MIN" ~ age / (365 * 24 * 60),  # Minutes to years
+      age_cod == "SEC" ~ age / (365 * 24 * 60 * 60), # Seconds to years
+      age_cod == "DEC" ~ age * 10,               # Decades to years
+      TRUE ~ NA_real_                            # Invalid codes default to NA
+    ),
+  )
+
+# Remove the age columns
+DEMO_legacy_pared$age <- NULL
+DEMO_legacy_pared$age_cod <- NULL
+
+## Now to harmonize the countries - the legacy data uses full-length country names, but the newer data uses country codes
+## We exported the unique entries in that column, manually mapped them to 2-letter codes, and stored them here in Country_ISO_Mapping.csv
+
+#Load two-digit country codes
+Country_ISO_Mapping <- read_csv("Country_ISO_Mapping.csv")
+
+# Use these codes to fix the country codes
+# Create a named vector for mapping
+country_dict <- setNames(Country_ISO_Mapping$ISO_Code, Country_ISO_Mapping$R_Output)
+
+# Ensure it is a data.table
+DEMO_legacy_pared <- as.data.table(DEMO_legacy_pared)
+
+# Replace 'country', keeping unmatched values as the original 'country'
+DEMO_legacy_pared[, country := ifelse(country %in% names(country_dict), 
+                                      country_dict[country], 
+                                      country)]
+
+## Now we combine both tables into one
+# Reorder columns in both datasets to match
+setcolorder(DEMO_pared_filtered, names(DEMO_legacy_pared))
+
+# Combine the datasets by row
+DEMO_combined <- rbind(DEMO_legacy_pared, DEMO_pared_filtered, use.names = TRUE, fill = TRUE)
+
+# A few final steps to sanitize the data
+# Censor ages below 0 and above 120
+DEMO_combined[, age_yr := ifelse(age_yr > 120 | age_yr < 0, NA, age_yr)]
+
+# Remove '.txt' if present in the filename
+DEMO_combined[, filename := gsub("\\.txt$", "", filename)]
+
+# Standardize filenames to uppercase
+DEMO_combined[, filename := toupper(filename)]
+
+# Remove intermediate files
+rm(DEMO, DEMO_compositeid, DEMO_legacy_compositeid, DEMO_Legacy, DEMO_legacy_pared, DEMO_pared, DEMO_pared_filtered)
+```
+
+Finally, we have to remove rows with repeated compositeids. Let's audit the data:
+
+```{r}
+DEMO_combined <- as.data.table(DEMO_combined)
+
+# Identify compositeids that appear more than once
+duplicated_ids <- DEMO_combined[, .N, by = compositeid][N > 1, compositeid]
+
+# Extract rows with duplicated compositeids
+duplicates_to_audit <- DEMO_combined[compositeid %in% duplicated_ids]
+View(duplicates_to_audit)
+```
+
+From inspection, it looks like there are repeated rows with differing filenames, and sometimes repeated rows where one has "NA" for country, and the other has a country. There may be other issues. Let's fix each issue.
+
+```{r}
+# Make sure DEMO_combined is a data.table
+DEMO_combined <- as.data.table(DEMO_combined)
+
+# Replace country entries with NA
+DEMO_combined[, country := fifelse(
+    is.na(country),                         # If 'country' is NA
+    na.omit(country)[1],                     # Replace with first non-NA value for that compositeid
+    country                                 # Otherwise, keep the original value
+), by = compositeid]
+
+# Pare down sex column 
+DEMO_combined[, sex := fifelse(
+  is.na(sex),  # Check if 'sex' is NA
+  sex[!is.na(sex)][1],  # Replace with the first non-NA value in the group
+  sex  # Otherwise, keep the current value
+), by = compositeid]
+
+# Fill NAs for event_dt
+DEMO_combined[, event_dt := fifelse(
+  is.na(event_dt), 
+  event_dt[!is.na(event_dt)][1], 
+  event_dt
+), by = compositeid]
+
+# Fill NAs for fda_dt
+DEMO_combined[, fda_dt := fifelse(
+  is.na(fda_dt), 
+  fda_dt[!is.na(fda_dt)][1], 
+  fda_dt
+), by = compositeid]
+
+# Fill NAs for rept_dt
+DEMO_combined[, rept_dt := fifelse(
+  is.na(rept_dt), 
+  rept_dt[!is.na(rept_dt)][1], 
+  rept_dt
+), by = compositeid]
+
+# Fill NAs for age_yr
+DEMO_combined[, age_yr := fifelse(
+  is.na(age_yr), 
+  age_yr[!is.na(age_yr)][1], 
+  age_yr
+), by = compositeid]
+
+# Resolve conflicts for date columns - KEEP LATER DATES
+date_cols <- c("event_dt", "fda_dt", "rept_dt")
+
+for (col in date_cols) {
+  DEMO_combined[, (col) := ifelse(
+    all(is.na(get(col))),  # Check if all values are NA
+    NA,                    # Keep it as NA
+    max(get(col), na.rm = TRUE)  # Otherwise, pick the max value
+  ), by = compositeid]
+}
+
+# Resolve filename conflicts - KEEP EARLIER FILENAME
+DEMO_combined[, filename := min(filename, na.rm = TRUE), by = compositeid]
+
+# Pare down to unique rows
+DEMO_combined <- unique(DEMO_combined)
+```
+
+Now there are 48 IDs that have duplicated rows. These largely differ by the age and sex. We will take two further steps. First, if one row has sex "NS" (rather than M or F), we'll pick the other row's sex. For the rest of the duplicates, we'll randomly pick one.
+
+```{r}
+# Fix the sex column 
+DEMO_combined[, sex := fifelse(
+  sex == "NS" & any(sex != "NS"),  # If 'sex' is "NS" and there's a non-"NS" value in the group
+  sex[sex != "NS"][1],            # Replace "NS" with the first non-"NS" value
+  sex                             # Otherwise, keep the existing value
+), by = compositeid]
+
+# Get the duplicates
+duplicates_to_resolve <- DEMO_combined[compositeid %in% compositeid[duplicated(compositeid)]]
+
+# Randomly select one row for each compositeid
+resolved_duplicates <- duplicates_to_resolve[ 
+  , .SD[sample(.N, 1)],  # Randomly select 1 row within each group
+  by = compositeid
+]
+
+# Remove old duplicates and add the resolved rows back
+DEMO_combined <- DEMO_combined[!compositeid %in% duplicates_to_resolve$compositeid]  # Remove old duplicates
+DEMO_combined <- rbind(DEMO_combined, resolved_duplicates)  # Add the resolved duplicates back
+```
+
+Finally, we have eliminated the duplicates. We can write this to disk.
+
+```{r}
+# Write final product to disk
+write.csv(DEMO_combined, file = "sanitized_demographics.csv", row.names = FALSE)
+```
+
+##TIME-TO-EVENT (TTE) SANITIZATION
+
+To obtain TTE data, one must use the THER table to find the date a drug is administered, and use the DEMO table to find the actual date of the event.
+
+```{r}
+THER_Legacy <- read_csv("THER Legacy.csv")
+THER <- read_csv("THER.csv")
+```
+
+The THER_Legacy table is LAERS data, while the THER table is FAERS data. We will combine them into one table
+
+```{r}
+# Change the third column of THER to "drug_seq" from "dsg_drug_seq"
+colnames(THER)[3] <- "drug_seq"
+
+#Fix the start_dt column in THER to be numeric (its char for some reason)
+THER <- THER %>% mutate(start_dt = as.numeric(start_dt))
+
+#Create composite IDs in each table
+THER <- create_compositeid(THER)
+THER_Legacy <- create_compositeid(THER_Legacy)
+
+# Eliminate some columns that are redundant or not used
+THER_Legacy$isr <- NULL
+THER$primaryid <- NULL
+THER$caseid <- NULL
+
+# Combine the THER and THER_Legacy tables
+combined_ther <- bind_rows(THER, THER_Legacy)
+rm(THER, THER_Legacy)
+
+# Fix the filename column
+# Remove '.txt' if present in the filename
+combined_ther[, filename := gsub("\\.txt$", "", filename)]
+
+# Standardize filenames to uppercase
+combined_ther[, filename := toupper(filename)]
+```
+
+The combined_ther table can be exported. The actual TTE analysis is conducted separately. Note that in the FAERS_TTE_Demography.Rmd file, entries are filtered by TTE for analysis.
+
+```{r}
+write.csv(combined_ther, "sanitized_ther.csv", row.names = FALSE)
+```
+
+Now sanitization is complete!

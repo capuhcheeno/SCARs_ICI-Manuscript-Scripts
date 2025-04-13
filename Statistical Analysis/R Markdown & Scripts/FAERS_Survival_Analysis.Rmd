@@ -1,0 +1,1622 @@
+---
+title: "FAERS_Survival_Analysis"
+author: "Eric Mukherjee"
+date: "2025-01-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load Required Libraries
+library(survival)
+library(survminer)
+library(tidyverse)
+library(tm)
+library(SnowballC)
+library(data.table)
+library(parallel)
+library(countrycode)
+library(broom)
+library(writexl)
+library(patchwork)
+library(ggplot2) # For theme adjustments
+library(coxphw)
+library(dplyr)
+```
+
+##INTRODUCTION
+
+We use survival analysis to analyze the drug latency. In order to do this analysis, you should have run the FAERS_TTE_Demography.Rmd file.
+
+##PREPROCESSING
+
+We can use the previously-parsed TTE files to do TTE analysis
+
+```{r}
+final_table_TTE_SJSTEN <- read.csv("final_table_TTE_SJSTEN.csv")
+final_table_TTE_DRESS <- read.csv("final_table_TTE_DRESS.csv")
+final_table_TTE_AGEP <- read.csv("final_table_TTE_AGEP.csv")
+final_table_TTE_GBFDE <- read.csv("final_table_TTE_GBFDE.csv")
+
+final_table_TTE_SJSTEN <- data.table(final_table_TTE_SJSTEN)
+final_table_TTE_DRESS <- data.table(final_table_TTE_DRESS)
+final_table_TTE_AGEP <- data.table(final_table_TTE_AGEP)
+final_table_TTE_GBFDE <- data.table(final_table_TTE_GBFDE)
+```
+
+Lets preprocess these tables by:
+
+- Removing the reaction in question from the reaction list 
+- Removing the causative drug from the drug list
+
+We'll do it for DRESS first
+
+```{r}
+# Define DRESS synonyms
+dress_synonyms <- c(
+    "drug rash with eosinophilia and systemic symptoms", 
+    "drug reaction with eosinophilia and systemic symptoms")
+
+# Clean and preprocess input data
+filtered_table_DRESS <- final_table_TTE_DRESS %>%
+  mutate(
+    # Remove leading and trailing spaces in drug_pt_list and reac_pt_list
+    drug_pt_list = trimws(drug_pt_list),
+    reac_pt_list = trimws(reac_pt_list)
+  ) %>%
+  # Remove DRESS synonyms from reac_pt_list
+  mutate(
+    reac_pt_list = sapply(reac_pt_list, function(x) {
+      reactions <- unlist(strsplit(x, ";"))
+      cleaned_reactions <- trimws(reactions) # Remove spaces within reactions
+      paste(cleaned_reactions[!tolower(cleaned_reactions) %in% tolower(dress_synonyms)], collapse = ";")
+    })
+  ) %>%
+  mutate(
+    drug_pt_list = mapply(function(drug_list, causative_drug) {
+      drugs <- unlist(strsplit(drug_list, ";")) # Split drug list
+      cleaned_drugs <- trimws(drugs)           # Remove spaces
+      # Remove causative drug for that row
+      paste(cleaned_drugs[!str_detect(tolower(cleaned_drugs), tolower(causative_drug))], collapse = ";")
+    }, drug_pt_list, causative_drug) # Match causative_drug in each row
+  )
+
+```
+
+Then we can do it with SJS-TEN
+
+```{r}
+# Define SJS-TEN synonyms
+sjsten_synonyms <- c(
+    "toxic epidermal necrolysis", 
+    "stevens-johnson syndrome", "sjs-ten overlap")
+
+# Clean and preprocess input data
+filtered_table_SJSTEN <- final_table_TTE_SJSTEN %>%
+  mutate(
+    # Remove leading and trailing spaces in drug_pt_list and reac_pt_list
+    drug_pt_list = trimws(drug_pt_list),
+    reac_pt_list = trimws(reac_pt_list)
+  ) %>%
+  # Remove SJS-TEN synonyms from reac_pt_list
+  mutate(
+    reac_pt_list = sapply(reac_pt_list, function(x) {
+      reactions <- unlist(strsplit(x, ";"))
+      cleaned_reactions <- trimws(reactions) # Remove spaces within reactions
+      paste(cleaned_reactions[!tolower(cleaned_reactions) %in% tolower(sjsten_synonyms)], collapse = ";")
+    })
+  ) %>%
+  mutate(
+    drug_pt_list = mapply(function(drug_list, causative_drug) {
+      drugs <- unlist(strsplit(drug_list, ";")) # Split drug list
+      cleaned_drugs <- trimws(drugs)           # Remove spaces
+      # Remove causative drug for that row
+      paste(cleaned_drugs[!str_detect(tolower(cleaned_drugs), tolower(causative_drug))], collapse = ";")
+    }, drug_pt_list, causative_drug) # Match causative_drug in each row
+  )
+```
+
+Also, we can do it for AGEP
+
+```{r}
+# Define AGEP synonyms
+agep_synonyms <- c("acute generalised exanthematous pustulosis")
+
+# Clean and preprocess input data
+filtered_table_AGEP <- final_table_TTE_AGEP %>%
+  mutate(
+    # Remove leading and trailing spaces in drug_pt_list and reac_pt_list
+    drug_pt_list = trimws(drug_pt_list),
+    reac_pt_list = trimws(reac_pt_list)
+  ) %>%
+  # Remove AGEP synonyms from reac_pt_list
+  mutate(
+    reac_pt_list = sapply(reac_pt_list, function(x) {
+      reactions <- unlist(strsplit(x, ";"))
+      cleaned_reactions <- trimws(reactions) # Remove spaces within reactions
+      paste(cleaned_reactions[!tolower(cleaned_reactions) %in% tolower(agep_synonyms)], collapse = ";")
+    })
+  ) %>%
+  mutate(
+    drug_pt_list = mapply(function(drug_list, causative_drug) {
+      drugs <- unlist(strsplit(drug_list, ";")) # Split drug list
+      cleaned_drugs <- trimws(drugs)           # Remove spaces
+      # Remove causative drug for that row
+      paste(cleaned_drugs[!str_detect(tolower(cleaned_drugs), tolower(causative_drug))], collapse = ";")
+    }, drug_pt_list, causative_drug) # Match causative_drug in each row
+  )
+```
+
+And finally, for GBFDE
+
+```{r}
+# Define GBFDE synonyms
+gbfde_synonyms <- c("generalised bullous fixed drug eruption")
+
+# Clean and preprocess input data
+filtered_table_GBFDE <- final_table_TTE_GBFDE %>%
+  mutate(
+    # Remove leading and trailing spaces in drug_pt_list and reac_pt_list
+    drug_pt_list = trimws(drug_pt_list),
+    reac_pt_list = trimws(reac_pt_list)
+  ) %>%
+  # Remove GBFDE synonyms from reac_pt_list
+  mutate(
+    reac_pt_list = sapply(reac_pt_list, function(x) {
+      reactions <- unlist(strsplit(x, ";"))
+      cleaned_reactions <- trimws(reactions) # Remove spaces within reactions
+      paste(cleaned_reactions[!tolower(cleaned_reactions) %in% tolower(gbfde_synonyms)], collapse = ";")
+    })
+  ) %>%
+  mutate(
+    drug_pt_list = mapply(function(drug_list, causative_drug) {
+      drugs <- unlist(strsplit(drug_list, ";")) # Split drug list
+      cleaned_drugs <- trimws(drugs)           # Remove spaces
+      # Remove causative drug for that row
+      paste(cleaned_drugs[!str_detect(tolower(cleaned_drugs), tolower(causative_drug))], collapse = ";")
+    }, drug_pt_list, causative_drug) # Match causative_drug in each row
+  )
+
+```
+
+
+## MULTI-GROUP KAPLAN-MEIER CURVES
+
+###Preprocess data
+
+First we want to compare the TTE for DRESS, SJS-TEN, and AGEP. We'll define a function to do that, stratified only by the causative drug. 
+
+The prepare_data function preprocesses and cleans raw data to prepare it for survival analysis and multivariate modeling.
+
+Steps:
+
+Handle Missing Values:
+
+- Replaces missing or blank entries in the country column with "Unknown".
+- Fills missing ages (age_yr) with the median age.
+
+Censor Time-to-Event (TTE):
+- Values 0 or less, or greater than 180, days are removed
+- Rows with TTE greater than 1.5*IQR above the 75% percentile or below the 25% percentile are removed
+
+Encode Categorical Variables:
+- Converts sex, country, and causative_drug to factors for compatibility with modeling.
+
+Filter by Causative Drug (Optional):
+- Allows filtering the dataset to rows with a specified causative drug.
+
+Count Concomitant Drugs:
+- Adds a column counting the number of drugs listed for each row.
+
+Process Reactions:
+- Extracts reactions from the reac_pt_list column and creates binary indicators for the top number_of_reactions.
+
+Remove Irrelevant Columns:
+- Drops columns such as event_dt, and rept_dt that are not needed for modeling.
+
+Remove duplicate compositeid rows:
+- Each compositeid should have only one row. For those rows with duplicate compositeid, the one with the lowest TTE value will be kept (as this will be when the reaction first appears)
+
+
+```{r}
+# Preprocess and Clean Data
+prepare_data <- function(data) {
+
+  ## AGE
+  # Fill missing values
+  data$age_yr[is.na(data$age_yr)] <- median(data$age_yr, na.rm = TRUE)
+
+  # Stratify age into 20-year bins and explicitly set as ordered
+  data$age_group <- cut(
+    data$age_yr,
+    breaks = seq(0, 100, by = 20),
+    include.lowest = TRUE,
+    right = FALSE,
+    labels = c("[0,20)", "[20,40)", "[40,60)", "[60,80)", "[80,100]")
+  )
+
+  data$age_group <- factor(data$age_group, ordered = FALSE)
+
+  ## TTE
+  # Censor TTE at or below 0 days, above 180 days, or if TTE is NULL
+  data <- data %>% mutate(TTE = ifelse(is.null(TTE) | is.na(TTE) | TTE <= 0 | TTE > 180, NA, TTE))
+
+  # Drop rows with missing critical data
+  data <- data %>% filter(!is.na(TTE))
+  
+  # Filter TTE outliers by IQR
+  Q1 <- quantile(data$TTE, 0.25)
+  Q3 <- quantile(data$TTE, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  data <- data %>% filter(TTE >= lower_bound & TTE <= upper_bound)
+
+  ## COUNTRIES
+  # Fill missing values
+  data$country[is.na(data$country) | data$country == ""] <- 'Unknown'
+  
+  # Preprocess country codes
+  data$country <- as.character(data$country)
+  data$country[data$country %in% c("COUNTRY NOT SPECIFIED", "UNKNOWN")] <- NA  # Replace unknown values with NA
+
+  # Map countries to regions
+  data$region <- countrycode(data$country, origin = 'iso2c', destination = 'region')
+  data$region[data$country == "RE"] <- "Sub-Saharan Africa" # Handle Reunion manually
+  data$region[is.na(data$region)] <- "Unknown" # Replace any remaining NA values
+
+  data$region <- as.factor(data$region) # Convert to factor
+
+  data$country <- as.factor(data$country) # Treat country as factor
+  
+  ## SEX
+  data$sex <- as.character(data$sex) # Ensure it's a character type
+  data$sex[!data$sex %in% c("M", "F")] <- "NS" # Replace non "M" or "F" entries with "NS"
+  data$sex <- factor(data$sex, levels = c("M", "F", "NS")) # Restrict levels to M, F, NS
+  data$sex <- relevel(data$sex, ref = "M") # Set "M" as the reference level
+
+  # Preserve all levels before filtering
+  all_levels <- unique(data$causative_drug)
+
+  # Retain original factor levels
+  data$causative_drug <- factor(data$causative_drug, levels = all_levels)
+
+  # Process Concomitant Drugs
+  drugs_list <- unlist(strsplit(paste(data$drug_pt_list, collapse = ";"), ";"))
+  drugs_list <- drugs_list[drugs_list != ""] # Remove empty entries
+
+  # Replace spaces and invalid characters in drug names
+  drugs_list <- gsub("[^a-zA-Z0-9_]", "_", drugs_list)
+  data$concomitant_count <- sapply(strsplit(data$drug_pt_list, ";"), length)
+
+  # Process Reaction Terms
+  reactions_list <- unlist(strsplit(paste(data$reac_pt_list, collapse = ";"), ";"))
+  reactions_list <- reactions_list[reactions_list != ""] # Remove empty entries
+
+  # Replace spaces and invalid characters in reaction terms
+  reactions_list <- gsub("[^a-zA-Z0-9_]", "_", reactions_list)
+
+  # Remove irrelevant columns
+  data <- data %>% select(-event_dt, -fda_dt, -rept_dt, -filename, -start_dt)
+  
+  ## REMOVE DUPLICATES AT THE END: Keep row with lowest TTE per compositeid
+  data <- data %>%
+    group_by(compositeid) %>%
+    slice_min(order_by = TTE, with_ties = FALSE) %>%
+    ungroup()  
+  return(data)
+}
+```
+
+Then apply this function to our data
+
+```{r}
+clean_data_DRESS <- prepare_data(filtered_table_DRESS)
+clean_data_SJSTEN <- prepare_data(filtered_table_SJSTEN)
+clean_data_AGEP <- prepare_data(filtered_table_AGEP)
+clean_data_GBFDE <- prepare_data(filtered_table_GBFDE)
+
+head(clean_data_DRESS)
+```
+Export these files (which are used for Random Survival Forests in Python):
+
+```{r}
+write.csv(clean_data_SJSTEN, file = "clean_data_SJSTEN.csv", row.names = FALSE)
+write.csv(clean_data_DRESS, file = "clean_data_DRESS.csv", row.names = FALSE)
+write.csv(clean_data_AGEP, file = "clean_data_AGEP.csv", row.names = FALSE)
+write.csv(clean_data_GBFDE, file = "clean_data_GBFDE.csv", row.names = FALSE)
+```
+
+We additionally will produce a clean_data_SCAR with a boolean column indicating which SCAR they have
+
+```{r}
+# Ensure boolean columns exist in each dataset before merging
+clean_data_SJSTEN$SJSTEN <- TRUE
+clean_data_SJSTEN$AGEP <- FALSE
+clean_data_SJSTEN$DRESS <- FALSE
+clean_data_SJSTEN$GBFDE <- FALSE
+
+clean_data_AGEP$SJSTEN <- FALSE
+clean_data_AGEP$AGEP <- TRUE
+clean_data_AGEP$DRESS <- FALSE
+clean_data_AGEP$GBFDE <- FALSE
+
+clean_data_DRESS$SJSTEN <- FALSE
+clean_data_DRESS$AGEP <- FALSE
+clean_data_DRESS$DRESS <- TRUE
+clean_data_DRESS$GBFDE <- FALSE
+
+clean_data_GBFDE$SJSTEN <- FALSE
+clean_data_GBFDE$AGEP <- FALSE
+clean_data_GBFDE$DRESS <- FALSE
+clean_data_GBFDE$GBFDE <- TRUE
+
+# Combine the datasets
+combined_data <- rbind(clean_data_SJSTEN, clean_data_AGEP, clean_data_DRESS, clean_data_GBFDE)
+
+# Ensure that if a compositeid appears in multiple datasets, the boolean columns reflect this
+combined_data <- combined_data %>%
+  group_by(compositeid) %>%
+  summarise(
+    sex = first(sex),
+    country = first(country),
+    age_yr = first(age_yr),
+    causative_drug = first(causative_drug),
+    reac_pt_list = first(reac_pt_list),
+    drug_pt_list = first(drug_pt_list),
+    TTE = first(TTE),
+    age_group = first(age_group),
+    region = first(region),
+    concomitant_count = first(concomitant_count),
+    SJSTEN = any(SJSTEN),
+    AGEP = any(AGEP),
+    DRESS = any(DRESS),
+    GBFDE = any(GBFDE)
+  )
+
+# View the combined dataset
+print(combined_data)
+
+# Save to CSV
+write.csv(combined_data, "clean_data_SCAR.csv", row.names = FALSE)
+```
+
+
+###Curves by Causative Drug
+
+Now that that's clean, we'll take two big steps:
+
+- Plot the top 10 (or N) drugs in Kaplan-Meier curves to see how they separate
+- Use the Cox model to better understand the factors influencing TTE
+
+```{r}
+multi_kaplan_meier <- function(data, top_n_drugs = 10, xlim = 100) {
+  cat("Step 1: Selecting Top N Drugs\n")
+
+  # Create frequency table of causative_drug
+  data$causative_drug <- as.character(data$causative_drug) # Ensure causative_drug is character
+  drug_counts <- table(data$causative_drug)
+  top_drugs <- names(sort(drug_counts, decreasing = TRUE)[1:top_n_drugs])
+
+  # Subset data for top drugs
+  filtered_data <- data %>% filter(causative_drug %in% top_drugs)
+  filtered_data$causative_drug <- factor(filtered_data$causative_drug, levels = top_drugs)
+
+  cat("Valid drugs included:", paste(top_drugs, collapse = ", "), "\n")
+
+  cat("Step 2: Fitting Kaplan-Meier Curves\n")
+  fit <- survfit(Surv(TTE) ~ causative_drug, data = filtered_data)
+  
+  return(list("fitted_model" = fit, "data" = filtered_data))
+}
+```
+
+First - SJS-TEN
+
+```{r}
+SJSTEN_cdrug <- multi_kaplan_meier(clean_data_SJSTEN, top_n_drugs = 10)
+
+pSJSTEN_cdrug <- ggsurvplot(
+    SJSTEN_cdrug$fitted_model,
+    data = SJSTEN_cdrug$data,
+    pval = TRUE,
+    pval.coord = c(80, 0.95),
+    conf.int = FALSE, # Remove confidence intervals
+    surv.median.line = "hv",
+    risk.table = TRUE,
+    risk.table.height = 0.3, # Adjust height for better fit
+    risk.table.type = "abs_pct",
+    risk.table.col = "black",
+    risk.table.y.text.col = TRUE,
+    risk.table.y.text = TRUE,
+    risk.table.title = "Number at risk",  # Add risk table title
+    break.time.by = 20,  # Risk table breaks match x-axis intervals
+    ggtheme = theme_minimal(),
+    risk.table.fontsize = 3,  # Adjust font size for risk table
+    title = "Kaplan-Meier Analysis for Top Drugs - SJS-TEN",
+    xlab = "Time to Event (Days)",
+    ylab = "Probability of No Event",
+    xlim = c(0, 100),  # Limit x-axis
+    legend.title = "Drug",
+    legend.labs = levels(SJSTEN_cdrug$data$causative_drug)
+  )
+
+pSJSTEN_cdrug
+```
+
+Next - DRESS
+
+```{r}
+DRESS_cdrug <- multi_kaplan_meier(clean_data_DRESS, top_n_drugs = 10)
+
+pDRESS_cdrug <- ggsurvplot(
+    DRESS_cdrug$fitted_model,
+    data = DRESS_cdrug$data,
+    pval = TRUE,
+    pval.coord = c(80, 0.95),
+    conf.int = FALSE, # Remove confidence intervals
+    surv.median.line = "hv",
+    risk.table = TRUE,    
+    risk.table.height = 0.3, # Adjust height for better fit
+    risk.table.col = "black",
+    risk.table.y.text.col = TRUE,
+    risk.table.y.text = TRUE,
+    risk.table.title = "Number at risk",  # Add risk table title
+    break.time.by = 20,  # Risk table breaks match x-axis intervals
+    ggtheme = theme_minimal(),
+    risk.table.fontsize = 3,  # Adjust font size for risk table
+    title = "Kaplan-Meier Analysis for Top Drugs - DRESS",
+    xlab = "Time to Event (Days)",
+    ylab = "Probability of No Event",
+    xlim = c(0, 100),  # Limit x-axis
+    legend.title = "Drug",
+    legend.labs = levels(DRESS_cdrug$data$causative_drug)
+  )
+
+pDRESS_cdrug
+```
+
+Finally - AGEP
+
+```{r}
+AGEP_cdrug <- multi_kaplan_meier(clean_data_AGEP, top_n_drugs = 10)
+
+pAGEP_cdrug <- ggsurvplot(
+    AGEP_cdrug$fitted_model,
+    data = AGEP_cdrug$data,
+    pval = TRUE,
+    pval.coord = c(40, 0.95),
+    conf.int = FALSE, # Remove confidence intervals
+    surv.median.line = "hv",
+    risk.table = TRUE,    
+    risk.table.height = 0.3, # Adjust height for better fit
+    risk.table.col = "black",
+    risk.table.y.text.col = TRUE,
+    risk.table.y.text = TRUE,
+    risk.table.title = "Number at risk",  # Add risk table title
+    break.time.by = 20,  # Risk table breaks match x-axis intervals
+    ggtheme = theme_minimal(),
+    risk.table.fontsize = 3,  # Adjust font size for risk table
+    title = "Kaplan-Meier Analysis for Top Drugs - AGEP",
+    xlab = "Time to Event (Days)",
+    ylab = "Probability of No Event",
+    xlim = c(0, 50),  # Limit x-axis
+    legend.title = "Drug",
+    legend.labs = levels(AGEP_cdrug$data$causative_drug)
+  )
+
+pAGEP_cdrug
+```
+
+Excellent. There are significant differences between groups when using a survival model stratified only by causative_drug. 
+
+###Curves by Demographic Variables
+
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Region\n")
+fit_region <- survfit(Surv(TTE) ~ region, data = clean_data_SJSTEN)
+
+pSJSTEN_region <- ggsurvplot(
+  fit_region,
+  data = clean_data_SJSTEN,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Region - SJS-TEN",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Region",
+  legend.labs = levels(clean_data_SJSTEN$region)
+)
+
+pSJSTEN_region
+```
+
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Region\n")
+fit_region <- survfit(Surv(TTE) ~ region, data = clean_data_DRESS)
+
+pDRESS_region <- ggsurvplot(
+  fit_region,
+  data = clean_data_DRESS,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Region - DRESS",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Region",
+  legend.labs = levels(clean_data_DRESS$region)
+)
+
+pDRESS_region
+```
+```{r}
+
+cat("Kaplan-Meier Survival Curve by Region\n")
+fit_region <- survfit(Surv(TTE) ~ region, data = clean_data_AGEP)
+
+pAGEP_region <- ggsurvplot(
+  fit_region,
+  data = clean_data_AGEP,
+  pval = TRUE,
+  pval.coord = c(40, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 50),
+  title = "Kaplan-Meier Survival by Region - AGEP",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Region",
+  legend.labs = levels(clean_data_AGEP$region)
+)
+
+pAGEP_region
+```
+
+###Curves by Sex
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Sex\n")
+fit_sex <- survfit(Surv(TTE) ~ sex, data = clean_data_SJSTEN)
+
+pSJSTEN_sex <- ggsurvplot(
+  fit_sex,
+  data = clean_data_SJSTEN,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Sex - SJS-TEN",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Sex",
+  legend.labs = levels(clean_data_SJSTEN$sex)
+)
+
+pSJSTEN_sex
+
+```
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Sex\n")
+fit_sex <- survfit(Surv(TTE) ~ sex, data = clean_data_DRESS)
+
+pDRESS_sex <- ggsurvplot(
+  fit_sex,
+  data = clean_data_DRESS,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Sex - DRESS",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Sex",
+  legend.labs = levels(clean_data_DRESS$sex)
+)
+
+pDRESS_sex
+```
+
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Sex\n")
+fit_sex <- survfit(Surv(TTE) ~ sex, data = clean_data_AGEP)
+
+pAGEP_sex <- ggsurvplot(
+  fit_sex,
+  data = clean_data_AGEP,
+  pval = TRUE,
+  pval.coord = c(40, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 50),
+  title = "Kaplan-Meier Survival by Sex - AGEP",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Sex",
+  legend.labs = levels(clean_data_AGEP$sex)
+)
+
+pAGEP_sex
+```
+
+###Curves by Age
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Age Group\n")
+fit_age <- survfit(Surv(TTE) ~ age_group, data = clean_data_SJSTEN)
+
+pSJSTEN_age <- ggsurvplot(
+  fit_age,
+  data = clean_data_SJSTEN,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  surv.median.line = "hv",
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Age Group - SJS-TEN",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Age Group",
+  legend.labs = levels(clean_data_SJSTEN$age_group)
+)
+
+pSJSTEN_age
+```
+```{r}
+cat("Kaplan-Meier Survival Curve by Age Group\n")
+fit_age <- survfit(Surv(TTE) ~ age_group, data = clean_data_DRESS)
+
+pDRESS_age <- ggsurvplot(
+  fit_age,
+  data = clean_data_DRESS,
+  pval = TRUE,
+  pval.coord = c(80, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 100),
+  title = "Kaplan-Meier Survival by Age Group - DRESS",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Age Group",
+  legend.labs = levels(clean_data_DRESS$age_group)
+)
+
+pDRESS_age
+```
+
+
+```{r}
+cat("Kaplan-Meier Survival Curve by Age Group\n")
+fit_age <- survfit(Surv(TTE) ~ age_group, data = clean_data_AGEP)
+
+pAGEP_age <- ggsurvplot(
+  fit_age,
+  data = clean_data_AGEP,
+  pval = TRUE,
+  pval.coord = c(40, 0.95),
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.3,
+  risk.table.fontsize = 3,  # Adjust font size for risk table
+  surv.median.line = "hv",
+  risk.table.col = "black",
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = TRUE,
+  break.time.by = 20,
+  ggtheme = theme_minimal(),
+  xlim = c(0, 50),
+  title = "Kaplan-Meier Survival by Age Group - AGEP",
+  xlab = "Time to Event (Days)",
+  ylab = "Probability of No Event",
+  legend.title = "Age Group",
+  legend.labs = levels(clean_data_AGEP$age_group)
+)
+
+pAGEP_age
+```
+
+
+###Final Multiplot
+
+```{r}
+# Suppress warnings
+options(warn = -1)
+
+# Extract ggplot objects from ggsurvplot outputs
+# AGEP
+pAGEP_age_plot <- pAGEP_age$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pAGEP_cdrug_plot <- pAGEP_cdrug$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pAGEP_region_plot <- pAGEP_region$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pAGEP_sex_plot <- pAGEP_sex$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+
+# DRESS
+pDRESS_age_plot <- pDRESS_age$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pDRESS_cdrug_plot <- pDRESS_cdrug$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pDRESS_region_plot <- pDRESS_region$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pDRESS_sex_plot <- pDRESS_sex$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+
+# SJS-TEN
+pSJSTEN_age_plot <- pSJSTEN_age$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pSJSTEN_cdrug_plot <- pSJSTEN_cdrug$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pSJSTEN_region_plot <- pSJSTEN_region$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+pSJSTEN_sex_plot <- pSJSTEN_sex$plot + theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+
+# Combine each condition into a 2x2 layout
+AGEP_plot <- (pAGEP_age_plot + pAGEP_cdrug_plot) / 
+             (pAGEP_region_plot + pAGEP_sex_plot)
+
+DRESS_plot <- (pDRESS_age_plot + pDRESS_cdrug_plot) / 
+              (pDRESS_region_plot + pDRESS_sex_plot)
+
+SJSTEN_plot <- (pSJSTEN_age_plot + pSJSTEN_cdrug_plot) / 
+               (pSJSTEN_region_plot + pSJSTEN_sex_plot)
+
+# Display the plots individually
+AGEP_plot
+DRESS_plot
+SJSTEN_plot
+
+# Restore warnings
+options(warn = 0)
+```
+
+
+
+
+##MULTIVARIATE COX REGRESSION ANALYSIS
+
+The previous survival analyses were all univariate. Now let's make it multivariate, by incorporating several variables into a cox multiple hazards model.
+
+###Fitting multivariate models
+
+The following function returns a multivariate Cox model, in which the top N causative drugs are treated as separate groups and the remaining causative drugs are grouped as "other".
+
+
+```{r}
+# Cox Regression Function with Expanded Summary Statistics
+cox_regression_demo <- function(data, top_n_drugs = 10) {
+  cat("Step 1: Preparing Data for Multivariate Cox Analysis\n")
+
+  # Select top N causative drugs and group the rest as 'Other'
+  drug_counts <- data %>% group_by(causative_drug) %>% summarise(count = n())
+  top_drugs <- drug_counts %>% top_n(top_n_drugs, wt = count) %>% pull(causative_drug)
+  data$causative_drug <- as.character(data$causative_drug)
+  data$causative_drug[!(data$causative_drug %in% top_drugs)] <- "Other"
+  data$causative_drug <- factor(data$causative_drug)
+
+  # Build Cox formula
+  cox_formula <- as.formula("Surv(TTE) ~ causative_drug + sex + region + age_group + + concomitant_count")
+  cat("Cox Model Formula: ", deparse(cox_formula), "\n")
+
+  cat("Step 2: Fitting Multivariate Cox Model\n")
+  cox_model <- coxph(cox_formula, data = data, ties = "efron")
+
+  # Step 3: Compute Summary Statistics
+  cat("Step 3: Computing Summary Statistics\n")
+  summary_stats <- bind_rows(
+    # Age Group
+    data %>% group_by(age_group) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Age Group", Level = as.character(age_group)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Causative Drug
+    data %>% group_by(causative_drug) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Causative Drug", Level = as.character(causative_drug)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Region
+    data %>% group_by(region) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Region", Level = as.character(region)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Sex
+    data %>% group_by(sex) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Sex", Level = as.character(sex)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75)
+  )
+
+  # Store stats in model object
+  cox_model$summary_stats <- summary_stats
+
+  return(cox_model)
+}
+```
+
+Run it:
+
+```{r}
+cox_SJSTEN_top10 <- cox_regression_demo(clean_data_SJSTEN, top_n_drugs = 10)
+cox_DRESS_top10 <- cox_regression_demo(clean_data_DRESS, top_n_drugs = 10)
+cox_AGEP_top10 <- cox_regression_demo(clean_data_AGEP, top_n_drugs = 10)
+```
+
+###Creating Tables
+
+Formatting the output:
+
+```{r}
+# Function to Format Cox Regression Results for Readability
+format_cox_results <- function(cox_model) {
+  cat("Step 1: Extracting and Formatting Results\n")
+
+  # Extract coefficients and confidence intervals
+  cox_summary <- summary(cox_model)
+  results <- as.data.frame(cox_summary$coefficients)
+  conf_int <- as.data.frame(cox_summary$conf.int)
+
+  # Combine coefficients and confidence intervals
+  results$HR <- conf_int$`exp(coef)`
+  results$HR.CI.lower <- conf_int$`lower .95`
+  results$HR.CI.upper <- conf_int$`upper .95`
+
+  # Extract variable names and levels
+  terms <- rownames(results)
+  xlevels <- cox_model$xlevels
+
+  # Format variables and levels
+  formatted_results <- tibble(
+    Variable = case_when(
+      grepl("causative_drug", terms) ~ "Causative Drug",
+      grepl("sex", terms) ~ "Sex",
+      grepl("region", terms) ~ "Region",
+      grepl("age_group", terms) ~ "Age Group",
+      TRUE ~ "Other"
+    ),
+    Level = case_when(
+      grepl("causative_drug", terms) ~ gsub("causative_drug", "", terms),
+      grepl("sex", terms) ~ gsub("sex", "", terms),
+      grepl("region", terms) ~ gsub("region", "", terms),
+      grepl("age_group", terms) ~ gsub("age_group", "", terms),
+      TRUE ~ terms
+    ),
+    HR = results$HR,
+    HR.CI.lower = results$HR.CI.lower,
+    HR.CI.upper = results$HR.CI.upper,
+    p.value = results$`Pr(>|z|)`
+  )
+  
+  # Add reference levels inline using model xlevels
+  reference_rows <- tibble()
+  for (var in names(xlevels)) {
+    ref_level <- xlevels[[var]][1]  # Reference is the first level
+    reference_rows <- bind_rows(
+      reference_rows,
+      tibble(
+        Variable = case_when(
+          var == "causative_drug" ~ "Causative Drug",
+          var == "sex" ~ "Sex",
+          var == "region" ~ "Region",
+          var == "age_group" ~ "Age Group",
+          TRUE ~ var
+        ),
+        Level = ref_level,
+        HR = 1.00,
+        CI = "[ Reference ]",
+        p.value = NA
+      )
+    )
+  }
+
+  # Combine results
+  combined_results <- bind_rows(reference_rows, formatted_results)
+
+  # Separate and reorder Age Group
+  age_group_results <- combined_results %>% filter(Variable == "Age Group")
+  age_order <- c("[0,20)", "[20,40)", "[40,60)", "[60,80)", "[80,100)")
+
+  # Remaining results
+  other_results <- combined_results %>% filter(Variable != "Age Group")
+
+  # Sort by p-value within each variable (excluding Age Group)
+  other_results <- other_results %>%
+    group_by(Variable) %>%
+    mutate(p.value = replace_na(p.value, -1)) %>%
+    arrange(p.value, .by_group = TRUE) %>%
+    mutate(p.value = replace(p.value, p.value == -1, NA)) %>%
+    ungroup()
+
+  # Combine reordered Age Group and other results
+  final_results <- bind_rows(age_group_results, other_results)
+
+  cat("Step 2: Display Formatted Results Table\n")
+  print(final_results)
+
+  return(final_results)
+}
+```
+
+Use that function to create summary tables:
+
+```{r}
+cox_SJSTEN_top10_table <- format_cox_results(cox_SJSTEN_top10)
+cox_DRESS_top10_table <- format_cox_results(cox_DRESS_top10)
+cox_AGEP_top10_table <- format_cox_results(cox_AGEP_top10)
+```
+
+Append summary statistics to the table:
+
+```{r}
+# Function to Append Summary Statistics to Results Table
+append_summary_stats <- function(results_table, cox_model) {
+  cat("Step 1: Adding Summary Statistics\n")
+
+  # Extract summary stats from cox_model
+  summary_stats <- cox_model$summary_stats
+
+  # Merge with results table
+  final_table <- merge(results_table, summary_stats, by = c("Variable", "Level"),  all.x = TRUE)
+
+  cat("Step 2: Display Final Results Table with Summary Statistics\n")
+  print(final_table)
+
+  return(final_table)
+}
+```
+
+```{r}
+cox_AGEP_top10_table_FINAL <- append_summary_stats(cox_AGEP_top10_table, cox_AGEP_top10)
+```
+
+```{r}
+cox_DRESS_top10_table_FINAL <- append_summary_stats(cox_DRESS_top10_table, cox_DRESS_top10)
+```
+
+```{r}
+cox_SJSTEN_top10_table_FINAL <- append_summary_stats(cox_SJSTEN_top10_table, cox_SJSTEN_top10)
+```
+Now we can export these tables as an Excel:
+
+```{r}
+#Make a list of the tables to export
+cox_sheets <- list("SJS-TEN" = cox_SJSTEN_top10_table_FINAL, "DRESS" = cox_DRESS_top10_table_FINAL, "AGEP" = cox_AGEP_top10_table_FINAL)
+
+#Write to Excel, one per sheet!
+write_xlsx(cox_sheets, path = "Cox_Models.xlsx")
+```
+
+
+##ALTERNATIVE MODELS
+
+Generally speaking, any Cox regression model has to obey the *Proportional Hazards assumption* (PH). PH states that the HR is constant between any two groups in a Cox model. This assumption, a priori, doesn't really have a good reason to hold in real-life settings, and even in the absence of the PH assumption, the HR serves as a weighted average of the hazard ratio between any two groups, so it's still informative but the model may not generalize.
+
+We can test the proportional hazards assumption using the cox.zph() function from the survival package:
+
+```{r}
+# Testing PH
+cox.zph(cox_SJSTEN_top10)
+cox.zph(cox_DRESS_top10)
+cox.zph(cox_AGEP_top10)
+```
+
+In all cases there are multiple covariates that have a signficant P-value. There are a few days to deal with this.
+
+- The easy way is to stratify by the violating covariates (meaning you fission your Cox model by that variable, and only get HRs for the other variables). In our case that's not perfect, due to multiple variables having this issue. We'll try stratifying by causative_drug.
+
+- Another is by relaxing PH by using weights (a weighted Cox regression)
+
+- A third is using random survival forests (which we have done using Python)
+
+###Stratify by causative drug
+
+We can change the function from before to stratify by causative drug
+
+```{r}
+# Cox Regression Function with Expanded Summary Statistics
+cox_regression_demo_stratdrug <- function(data) {
+  cat("Step 1: Preparing Data for Multivariate Cox Analysis\n")
+
+  # Build Cox formula
+  cox_formula <- as.formula("Surv(TTE) ~ strata(causative_drug) + sex + region + age_group + + concomitant_count")
+  cat("Cox Model Formula: ", deparse(cox_formula), "\n")
+
+  cat("Step 2: Fitting Multivariate Cox Model\n")
+  cox_model <- coxph(cox_formula, data = data, ties = "efron")
+
+  # Step 3: Compute Summary Statistics
+  cat("Step 3: Computing Summary Statistics\n")
+  summary_stats <- bind_rows(
+    # Age Group
+    data %>% group_by(age_group) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Age Group", Level = as.character(age_group)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Causative Drug
+    data %>% group_by(causative_drug) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Causative Drug", Level = as.character(causative_drug)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Region
+    data %>% group_by(region) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Region", Level = as.character(region)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Sex
+    data %>% group_by(sex) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Sex", Level = as.character(sex)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75)
+  )
+
+  # Store stats in model object
+  cox_model$summary_stats <- summary_stats
+
+  return(cox_model)
+}
+```
+
+Run it:
+
+```{r}
+cox_SJSTEN_strata <- cox_regression_demo_stratdrug(clean_data_SJSTEN)
+cox_DRESS_strata <- cox_regression_demo_stratdrug(clean_data_DRESS)
+cox_AGEP_strata <- cox_regression_demo_stratdrug(clean_data_AGEP)
+```
+
+####Creating Tables
+
+We can use the same functions as before to format the output
+
+```{r}
+cox_SJSTEN_strata_table <- format_cox_results(cox_SJSTEN_strata)
+cox_DRESS_strata_table <- format_cox_results(cox_DRESS_strata)
+cox_AGEP_strata_table <- format_cox_results(cox_AGEP_strata)
+```
+
+```{r}
+cox_AGEP_strata_table_FINAL <- append_summary_stats(cox_AGEP_strata_table, cox_AGEP_strata)
+cox_DRESS_strata_table_FINAL <- append_summary_stats(cox_DRESS_strata_table, cox_DRESS_strata)
+cox_SJSTEN_strata_table_FINAL <- append_summary_stats(cox_SJSTEN_strata_table, cox_SJSTEN_strata)
+```
+
+
+Now we can export these tables as an Excel:
+
+```{r}
+#Make a list of the tables to export
+cox_sheets_stratified <- list("SJS-TEN" = cox_SJSTEN_strata_table_FINAL, "DRESS" = cox_DRESS_strata_table_FINAL, "AGEP" = cox_AGEP_strata_table_FINAL)
+
+#Write to Excel, one per sheet!
+write_xlsx(cox_sheets_stratified, path = "Cox_Models_Stratified.xlsx")
+```
+
+#### Test the assumptions
+
+Lets see if we did any better here:
+
+```{r}
+# Testing PH
+cox.zph(cox_SJSTEN_strata)
+cox.zph(cox_DRESS_strata)
+cox.zph(cox_AGEP_strata)
+```
+
+Better, but still violating the PH assumption. We'll use the Weibull model and a Random Survival Forest to assess these covariates as well. 
+
+###Weibull model
+
+This is an alternative to the Cox model, which does not have the proportional hazards assumption. However, unlike the Cox model, it specifies the distribution rather than being semi-parametric.
+
+```{r}
+fit_weibull_model <- function(data) {
+  library(survival)
+  
+  cat("Step 1: Preparing Data for Weibull Parametric Survival Analysis\n")
+  
+  # Set reference levels for categorical variables
+  data$age_group <- relevel(factor(data$age_group), ref = "[0,20)")
+  data$region <- relevel(factor(data$region), ref = "Unknown")
+  data$sex <- relevel(factor(data$sex), ref = "M")
+  
+  # Confirm the reference levels
+  cat("Reference levels set:\n")
+  cat("Age Group:", levels(data$age_group), "\n")
+  cat("Region:", levels(data$region), "\n")
+  cat("Sex:", levels(data$sex), "\n")
+  
+  # Build Weibull formula
+  weibull_formula <- as.formula("Surv(TTE) ~ causative_drug + sex + region + age_group + concomitant_count")
+  cat("Weibull Model Formula: ", deparse(weibull_formula), "\n")
+
+  cat("Step 2: Fitting Weibull Parametric Survival Model\n")
+  weibull_model <- tryCatch({
+    survreg(weibull_formula, data = data, dist = "weibull")
+  }, error = function(e) {
+    stop("Error in survreg: ", e, "\n")
+  })
+
+  cat("Model fitting complete.\n")
+  return(weibull_model)
+}
+```
+
+Apply this function:
+
+```{r}
+weibull_SJSTEN <- fit_weibull_model(clean_data_SJSTEN)
+weibull_DRESS <- fit_weibull_model(clean_data_DRESS)
+weibull_AGEP <- fit_weibull_model(clean_data_AGEP)
+```
+Extract the data
+
+```{r}
+extract_weibull_results <- function(weibull_model) {
+  cat("Extracting results from Weibull model\n")
+  
+  # Get the summary of the model
+  model_summary <- summary(weibull_model)
+  
+  # Extract coefficients, standard errors, and p-values
+  coefficients_matrix <- model_summary$table
+  coefficients <- coefficients_matrix[, 1]  # Coefficients
+  std_errors <- coefficients_matrix[, 2]   # Standard Errors
+  p_values <- coefficients_matrix[, 4]     # P-values
+  
+  # Compute hazard ratios (exp(-coefficients) for survreg Weibull)
+  hazard_ratios <- exp(-coefficients)
+  
+  # Confidence intervals for hazard ratios
+  lower_ci <- exp(-(coefficients + 1.96 * std_errors))
+  upper_ci <- exp(-(coefficients - 1.96 * std_errors))
+  
+  # Combine results into a dataframe
+  results <- data.frame(
+    Variable = rownames(coefficients_matrix),
+    Coefficient = coefficients,
+    Hazard_Ratio = hazard_ratios,
+    CI_Lower = lower_ci,
+    CI_Upper = upper_ci,
+    P_value = p_values
+  )
+  
+  return(results)
+}
+```
+
+And use it:
+
+```{r}
+weibull_results_SJSTEN <- extract_weibull_results(weibull_SJSTEN)
+weibull_results_DRESS <- extract_weibull_results(weibull_DRESS)
+weibull_results_AGEP <- extract_weibull_results(weibull_AGEP)
+```
+Write the Weibulls to an excel
+
+```{r}
+#Make a list of the tables to export
+weibull_sheets <- list("SJS-TEN" = weibull_results_SJSTEN, "DRESS" = weibull_results_DRESS, "AGEP" = weibull_results_AGEP)
+
+#Write to Excel, one per sheet!
+write_xlsx(weibull_sheets, path = "Weibull_Models.xlsx")
+```
+
+
+#END OF PUBLISHED WORK
+
+The below attempts were not included in the paper.
+
+###Weighted Cox Models
+
+```{r}
+cox_regression_demo_weighted <- function(data, top_n_drugs = 10) {
+  cat("Step 1: Preparing Data for Weighted Cox Analysis\n")
+
+  # Ensure status is set to 1 for all rows
+  data$status <- 1
+
+  # Check if required columns exist
+  required_cols <- c("TTE", "status", "causative_drug", "sex", "region", "age_group", "concomitant_count")
+  missing_cols <- setdiff(required_cols, colnames(data))
+  if (length(missing_cols) > 0) {
+    stop("Missing columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  # Ensure factors for categorical variables
+  data$causative_drug <- as.factor(data$causative_drug)
+  data$sex <- as.factor(data$sex)
+  data$region <- as.factor(data$region)
+  data$age_group <- as.factor(data$age_group)
+
+  # Select top N causative drugs and group the rest as 'Other'
+  drug_counts <- data %>% group_by(causative_drug) %>% summarise(count = n()) %>% arrange(desc(count))
+  top_drugs <- head(drug_counts$causative_drug, top_n_drugs)
+  data$causative_drug <- as.character(data$causative_drug)
+  data$causative_drug[!(data$causative_drug %in% top_drugs)] <- "Other"
+  data$causative_drug <- factor(data$causative_drug)
+
+  # Build Cox formula
+  cox_formula <- as.formula("Surv(TTE, status) ~ causative_drug + sex + region + age_group + concomitant_count")
+  cat("Cox Model Formula: ", deparse(cox_formula), "\n")
+
+  cat("Step 2: Fitting Weighted Cox Model\n")
+  cox_model <- coxphw(cox_formula, data = data, template = "AHR")
+
+  # Step 3: Compute Summary Statistics
+  cat("Step 3: Computing Summary Statistics\n")
+  summary_stats <- bind_rows(
+    # Age Group
+    data %>% group_by(age_group) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Age Group", Level = as.character(age_group)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Causative Drug
+    data %>% group_by(causative_drug) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Causative Drug", Level = as.character(causative_drug)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Region
+    data %>% group_by(region) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Region", Level = as.character(region)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Sex
+    data %>% group_by(sex) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Sex", Level = as.character(sex)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75)
+  )
+
+  # Store stats in model object
+  cox_model$summary_stats <- summary_stats
+
+  return(cox_model)
+}
+
+```
+
+Apply the function
+
+```{r}
+coxw_SJSTEN_top10 <- cox_regression_demo_weighted(clean_data_SJSTEN, top_n_drugs = 10)
+coxw_DRESS_top10 <- cox_regression_demo_weighted(clean_data_DRESS, top_n_drugs = 10)
+coxw_AGEP_top10 <- cox_regression_demo_weighted(clean_data_AGEP, top_n_drugs = 10)
+```
+
+Now generate functions for displaying the results
+
+```{r}
+format_cox_results_weighted <- function(cox_model) {
+  # Extract coefficients, confidence intervals, and p-values
+  variable_names <- names(cox_model$coefficients)
+
+  # Initialize Variable and Level columns
+  results <- data.frame(
+    Variable = character(length(variable_names)),
+    Level = character(length(variable_names)),
+    HR = exp(cox_model$coefficients),
+    Lower_CI = cox_model$ci.lower,
+    Upper_CI = cox_model$ci.upper,
+    p_value = cox_model$prob
+  )
+
+  # Manually check prefixes and extract variable and level
+  for (i in seq_along(variable_names)) {
+    if (startsWith(variable_names[i], "sex")) {
+      results$Variable[i] <- "Sex"
+      results$Level[i] <- sub("sex", "", variable_names[i])
+    } else if (startsWith(variable_names[i], "causative_drug")) {
+      results$Variable[i] <- "Causative Drug"
+      results$Level[i] <- sub("causative_drug", "", variable_names[i])
+    } else if (startsWith(variable_names[i], "region")) {
+      results$Variable[i] <- "Region"
+      results$Level[i] <- sub("region", "", variable_names[i])
+    } else if (startsWith(variable_names[i], "age_group")) {
+      results$Variable[i] <- "Age Group"
+      results$Level[i] <- sub("age_group", "", variable_names[i])
+    } else {
+      results$Variable[i] <- "Other"  # Default to full name if no match
+      results$Level[i] <- variable_names[i]
+    }
+  }
+
+  # Merge HR information into summary stats
+  summary_stats <- cox_model$summary_stats
+  summary_stats <- merge(summary_stats, results, by = c("Variable", "Level"), all = TRUE)
+
+  # Fill in reference levels with HR = 1
+  summary_stats$HR[is.na(summary_stats$HR)] <- 1
+  summary_stats$Lower_CI[is.na(summary_stats$Lower_CI)] <- 1
+  summary_stats$Upper_CI[is.na(summary_stats$Upper_CI)] <- 1
+  summary_stats$p_value[is.na(summary_stats$p_value)] <- NA
+  
+  
+  return(summary_stats)
+}
+
+```
+
+Format the tables like before:
+
+```{r}
+coxw_SJSTEN_top10_table <- format_cox_results_weighted(coxw_SJSTEN_top10)
+coxw_DRESS_top10_table <- format_cox_results_weighted(coxw_DRESS_top10)
+coxw_AGEP_top10_table <- format_cox_results_weighted(coxw_AGEP_top10)
+```
+
+Just like the non-weighted Cox models, we can export these to an excel:
+
+```{r}
+#Make a list of the tables to export
+weighted_cox_sheets <- list("SJS-TEN" = coxw_SJSTEN_top10_table, "DRESS" = coxw_DRESS_top10_table, "AGEP" = coxw_AGEP_top10_table)
+
+#Write to Excel, one per sheet!
+write_xlsx(weighted_cox_sheets, path = "Cox_Models_Weighted.xlsx")
+```
+
+
+
+###Weighted AND Stratified Cox Models
+
+We can control for both of these issues at once:
+
+```{r}
+cox_regression_demo_weighted_stratified <- function(data) {
+  cat("Step 1: Preparing Data for Weighted Cox Analysis\n")
+
+  # Ensure status is set to 1 for all rows
+  data$status <- 1
+
+  # Check if required columns exist
+  required_cols <- c("TTE", "status", "causative_drug", "sex", "region", "age_group", "concomitant_count")
+  missing_cols <- setdiff(required_cols, colnames(data))
+  if (length(missing_cols) > 0) {
+    stop("Missing columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  # Ensure factors for categorical variables
+  data$causative_drug <- as.factor(data$causative_drug)
+  data$sex <- as.factor(data$sex)
+  data$region <- as.factor(data$region)
+  data$age_group <- as.factor(data$age_group)
+
+  # Build Cox formula
+  cox_formula <- as.formula("Surv(TTE, status) ~ strata(causative_drug) + sex + region + age_group + concomitant_count")
+  cat("Cox Model Formula: ", deparse(cox_formula), "\n")
+
+  cat("Step 2: Fitting Weighted Cox Model\n")
+  cox_model <- coxphw(cox_formula, data = data, template = "AHR")
+
+  # Step 3: Compute Summary Statistics
+  cat("Step 3: Computing Summary Statistics\n")
+  summary_stats <- bind_rows(
+    # Age Group
+    data %>% group_by(age_group) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Age Group", Level = as.character(age_group)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Causative Drug
+    data %>% group_by(causative_drug) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Causative Drug", Level = as.character(causative_drug)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Region
+    data %>% group_by(region) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Region", Level = as.character(region)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75),
+
+    # Sex
+    data %>% group_by(sex) %>% summarise(
+      N = n(),
+      Mean_TTE = mean(TTE, na.rm = TRUE),
+      Mean_CI_Lower = mean(TTE, na.rm = TRUE) - 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Mean_CI_Upper = mean(TTE, na.rm = TRUE) + 1.96 * (sd(TTE, na.rm = TRUE) / sqrt(n())),
+      Median_TTE = median(TTE, na.rm = TRUE),
+      P25 = quantile(TTE, 0.25, na.rm = TRUE),
+      P75 = quantile(TTE, 0.75, na.rm = TRUE)
+    ) %>% mutate(Variable = "Sex", Level = as.character(sex)) %>%
+      select(Variable, Level, N, Mean_TTE, Mean_CI_Lower, Mean_CI_Upper, Median_TTE, P25, P75)
+  )
+
+  # Store stats in model object
+  cox_model$summary_stats <- summary_stats
+
+  return(cox_model)
+}
+
+```
+
+Apply the function:
+
+```{r}
+coxw_SJSTEN_strata <- cox_regression_demo_weighted_stratified(clean_data_SJSTEN)
+coxw_DRESS_strata <- cox_regression_demo_weighted_stratified(clean_data_DRESS)
+coxw_AGEP_strata <- cox_regression_demo_weighted_stratified(clean_data_AGEP)
+```
+
+Format the tables like before:
+
+```{r}
+coxw_SJSTEN_strata_table <- format_cox_results_weighted(coxw_SJSTEN_strata)
+coxw_DRESS_strata_table <- format_cox_results_weighted(coxw_DRESS_strata)
+coxw_AGEP_strata_table <- format_cox_results_weighted(coxw_AGEP_strata)
+```
+
+Just like the non-weighted Cox models, we can export these to an excel:
+
+```{r}
+#Make a list of the tables to export
+weighted_staratified_cox_sheets <- list("SJS-TEN" = coxw_SJSTEN_strata_table, "DRESS" = coxw_DRESS_strata_table, "AGEP" = coxw_AGEP_strata_table)
+
+#Write to Excel, one per sheet!
+write_xlsx(weighted_staratified_cox_sheets, path = "Cox_Models_Weighted_Stratified.xlsx")
+```

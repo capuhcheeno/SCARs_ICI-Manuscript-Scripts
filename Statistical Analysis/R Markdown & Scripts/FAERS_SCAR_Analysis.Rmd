@@ -1,0 +1,3029 @@
+---
+title: "FAERS SCAR Analysis"
+author: "Eric Mukherjee"
+date: "2024-09-25"
+output: html_document
+---
+
+## PACKAGES
+
+```{r message=FALSE, warning=FALSE, include=FALSE, r,results='hide'}
+library(data.table)
+library(readr)
+library(ggplot2)
+library(reshape2)
+library(lattice)
+library(VennDiagram)
+library(ComplexUpset)
+library(gridExtra)
+library(dplyr)
+library(RColorBrewer)
+library(patchwork)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(ggpubr)
+library(viridis)
+library(gridExtra)
+library(grid)
+library(tidyverse)
+library(pbapply)
+```
+
+
+## BACKEND
+
+Define the S4 class used to store contingency tables.
+
+```{r Backend}
+# Define the S4 class "DrugContingencyTables"
+setClass("DrugContingencyTables",
+         slots = c(
+           contingency_table_all_roles = "data.table",
+           contingency_table_ps_only = "data.table",
+           contingency_table_ps_ss_only = "data.table"
+         ))
+```
+
+Set colors for graphs
+
+```{r}
+# Define consistent colors for all SCAR types
+scar_colors <- setNames(brewer.pal(5, "Set1"),  # Use Set1 with 5 distinct colors
+                        c("SJS-TEN", "DRESS", "AGEP", "GBFDE", "Total SCAR"))
+```
+
+Import pre-sanitized data (if your working directory doesn't contain both this Rmd file and the following files, you'll have to do it manually):
+
+```{r}
+# Import Drug and Outcome Data
+standard_case_drug <- read_csv("sanitized_drug_data.csv")
+standard_case_outcome <- read_csv("sanitized_outcome_data.csv")
+Updated_Drug_Dictionary <- read.csv("drug_dictionary.csv")
+outcome_dictionary <- read.csv("sanitized_outcome_dictionary.csv")
+demographics <- read.csv("sanitized_demographics.csv")
+```
+
+After its imported, make sure to transform everything into data.tables, because we need those for fast operations.
+
+```{r}
+# Transform into data.tables
+standard_case_drug <- data.table(standard_case_drug)
+standard_case_outcome <- data.table(standard_case_outcome)
+Updated_Drug_Dictionary <- data.table(Updated_Drug_Dictionary)
+outcome_dictionary <- data.table(outcome_dictionary)
+```
+
+We'll need this function to write stats for the contingency tables.
+
+```{r}
+# Function to process a contingency table and compute IC, PRR, and ROR
+process_contingency_table <- function(contingency_table) {
+
+  # Ensure the contingency table columns are numeric to prevent integer overflow
+  contingency_table[, `:=`(a = as.numeric(a), 
+                           b = as.numeric(b), 
+                           c = as.numeric(c), 
+                           d = as.numeric(d))]
+  
+  # Calculate the expected value (E) of number of cases
+  contingency_table[, E := ifelse((a + b + c + d == 0), NA, ((a + b) * (a + c)) / (a + b + c + d))]
+  
+  
+  ## PROPORTIONAL REPORTING RATIO (PRR)
+  # Calculate Proportional Reporting Ratio (PRR)
+  contingency_table[, PRR := ifelse((a + c == 0) | (b + d == 0), NA, 
+                                  (a / (a + b)) / (c / (c + d)))]
+  
+  # Calculate 95% CI for PRR
+  contingency_table[, PRR_lower := exp(log(PRR) - 1.96 * sqrt(b/(a*(a+b))+(d)/(c*(c+d))))]
+  contingency_table[, PRR_upper := exp(log(PRR) + 1.96 * sqrt(b/(a*(a+b))+(d)/(c*(c+d))))]
+  
+  
+  ## REPORTING ODDS RATIO (ROR)
+  # Calculate Reporting Odds Ratio (ROR)
+  contingency_table[, ROR := ifelse(b == 0 | c == 0 | d == 0, NA, (a * d) / (b * c))]
+
+  # Calculate 95% CI for ROR
+  contingency_table[, ROR_lower := exp(log(ROR) - 1.96 * sqrt(1/a + 1/b + 1/c + 1/d))]
+  contingency_table[, ROR_upper := exp(log(ROR) + 1.96 * sqrt(1/a + 1/b + 1/c + 1/d))]
+
+  
+  ##INFORMATION COMPONENT
+  # Calculate Information Component (IC) and apply Bayesian smoothing
+  contingency_table[, IC := ifelse(E == 0 | a == 0, NA, log2((a + 0.5) / (E + 0.5)))]
+
+  # Calculate the 95% Confidence Intervals for IC (IC025 and IC975)
+  contingency_table[, IC025 := log2((a + 0.5) / (E + 0.5)) - 
+                                  3.3 * ((a + 0.5)^(-1 / 2)) - 
+                                  2 * ((a + 0.5)^(-3 / 2))]
+
+  contingency_table[, IC975 := log2((a + 0.5) / (E + 0.5)) + 
+                                  2.4 * ((a + 0.5)^(-1 / 2)) - 
+                                  0.5 * ((a + 0.5)^(-3 / 2))]
+ 
+  
+  ##CHI-SQUARED WITH YATES CORRECTION
+  ##With Fisher's exact test for small samples
+  contingency_table[, `:=`(
+    # Apply chisq.test row-wise with Yates' correction
+    chi_squared_yates = sapply(1:.N, function(i) {
+      # Construct 2x2 contingency table for the row
+      mat <- matrix(c(a[i], b[i], c[i], d[i]), nrow = 2, byrow = TRUE)
+      # Perform chi-squared test with Yates' correction
+      test <- suppressWarnings(chisq.test(mat, correct = TRUE))
+      # Extract statistic
+      test$statistic
+    }),
+  
+    p_value_chi_squared = sapply(1:.N, function(i) {
+      # Construct 2x2 contingency table for the row
+      mat <- matrix(c(a[i], b[i], c[i], d[i]), nrow = 2, byrow = TRUE)
+      # Perform chi-squared test with Yates' correction
+      test <- suppressWarnings(chisq.test(mat, correct = TRUE))
+      # Extract p-value
+      test$p.value
+    })
+  )]
+  
+  
+  # Return the updated contingency table
+  return(contingency_table)
+}
+```
+
+## CONTINGENCY TABLES
+
+We will analyze all SCAR (SJS/TEN spectrum, DRESS, AGEP, GBDFE) first.
+
+In general, our criteria for including anything for analysis will be a > 2 (at least three cases in the database). Lets make separate S4 objects for each set of outcomes with that restriction.
+
+We'll need a function to aggregate multiple outcomes into a super-outcome. We would like to be able to aggregate contingency tables for, for example, the entire SJS/TEN spectrum or SCAR. Let's write a function to do that.
+
+```{r include=FALSE}
+# Function to calculate contingency tables for a group of outcomes using OR logic
+grouped_outcome_contingency_table <- function(drug_data, outcome_data, outcome_group, roles = c("PS", "SS", "C", "I")) {
+  # Step 1: Identify all unique IDs (patients) in both datasets
+  unique_exposed_ids <- unique(drug_data$compositeid)  # Unique patients with drug information in the database
+  unique_outcome_ids <- unique(outcome_data$compositeid)  # Unique patients with any outcome in the database
+  
+  # Step 2: Get the total number of unique patients from the union of drug and outcome datasets
+  total_patients <- uniqueN(c(unique_exposed_ids, unique_outcome_ids))
+  
+  # Step 3: Filter the drug data based on the selected roles and keep necessary columns
+  drug_data <- unique(as.data.table(drug_data)[role_cod %in% roles, .(compositeid, drug_concept_id, role_cod)])
+ 
+  # Step 4: Get the list of unique drugs after filtering by role:
+  unique_drugs <- unique(drug_data$drug_concept_id)
+  
+  # Step 5: Filter outcome data to only include the outcomes of interest (OR logic)
+  outcome_data <- unique(as.data.table(outcome_data)[, .(compositeid, outcome_concept_id)])
+  outcome_data <- outcome_data[outcome_concept_id %in% outcome_group]
+  unique_outcome_ids <- unique(outcome_data$compositeid)  # Update the outcome_ids to isolate those with the outcome of interest
+  
+  # Step 6: Create a contingency table using OR logic across the outcomes
+  contingency_table <- drug_data[, .(
+    exposed_patients = uniqueN(compositeid),            # Patients exposed to the drug
+    outcome_patients = uniqueN(unique_outcome_ids),     # Patients with any outcome in the group
+    a = uniqueN(intersect(compositeid, unique_outcome_ids)) # Patients exposed and with outcome
+  ), by = drug_concept_id]
+  
+  # Step 7: Calculate b, c, and d for the 2x2 contingency table
+  contingency_table[, b := exposed_patients - a] # Patients exposed but without outcome
+  contingency_table[, c := outcome_patients - a] # Patients with outcome but not exposed
+  contingency_table[, d := total_patients - (a + b + c)] # Patients neither exposed nor with outcome
+  
+  # Return the contingency table
+  return(contingency_table)
+}
+```
+
+Let's group our outcomes into reasonable groups:
+
+```{r include=FALSE}
+# Group into lists
+SCAR_IDs <- c(43053854, 36009724, 43010942, 36009754, 36211150, 37179294, 35327030, 35104825)
+SJSTEN_IDs <- c(36009724, 43010942, 36009754)
+DRESS_IDs <- c(43053854, 37179294, 35104825) # Both DRESS and AGEP will include "AGEP-DRESS Overlap"
+AGEP_IDs <- c(36211150, 37179294)
+GBFDE_IDs <- c(35327030)
+Pemphigoid_IDs <- c(36009850, 35607131, 42622535, 37178262, 37178403) #Includes pemphigoid, ocular pemphigoid, MPP, lichen planus pemphigoides, and pemphigoid antibody panel
+Pemphigus_IDs <- c(36009851, 36009849, 43009140) #includes pemphigus, paraneoplastic pemphigus, and pemphigus antibody panel
+SDRIFE_IDs <- c(788567) 
+SystemicContact_IDs <- c(37178271)
+LinearIgADisease_IDs <- c(36009846)
+```
+
+First, we'll create contingency tables for all SCAR together.
+
+```{r include=FALSE}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing all SCAR
+SCAR_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SCAR_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SCAR_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SCAR_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SCAR_Contingency_Tables@contingency_table_all_roles <- SCAR_Contingency_Tables@contingency_table_all_roles[a >2,]
+SCAR_Contingency_Tables@contingency_table_ps_only <- SCAR_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SCAR_Contingency_Tables@contingency_table_ps_ss_only <- SCAR_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SCAR_Contingency_Tables@contingency_table_ps_ss_only <- merge(SCAR_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SCAR_Contingency_Tables@contingency_table_ps_only <- merge(SCAR_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SCAR_Contingency_Tables@contingency_table_all_roles <- merge(SCAR_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+SCAR_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(SCAR_Contingency_Tables@contingency_table_all_roles)
+SCAR_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(SCAR_Contingency_Tables@contingency_table_ps_only)
+SCAR_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( SCAR_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(SCAR_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(SCAR_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(SCAR_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Next we'll do SJS-TEN spectrum:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing all SJS-TEN spectrum
+SJSTEN_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SJSTEN_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SJSTEN_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SJSTEN_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SJSTEN_Contingency_Tables@contingency_table_all_roles <- SJSTEN_Contingency_Tables@contingency_table_all_roles[a >2,]
+SJSTEN_Contingency_Tables@contingency_table_ps_only <- SJSTEN_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SJSTEN_Contingency_Tables@contingency_table_ps_ss_only <- SJSTEN_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SJSTEN_Contingency_Tables@contingency_table_ps_ss_only <- merge(SJSTEN_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_Contingency_Tables@contingency_table_ps_only <- merge(SJSTEN_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_Contingency_Tables@contingency_table_all_roles <- merge(SJSTEN_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+SJSTEN_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(SJSTEN_Contingency_Tables@contingency_table_all_roles)
+SJSTEN_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(SJSTEN_Contingency_Tables@contingency_table_ps_only)
+SJSTEN_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( SJSTEN_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(SJSTEN_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(SJSTEN_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(SJSTEN_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Next, DRESS:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing DRESS
+DRESS_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = DRESS_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = DRESS_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = DRESS_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+DRESS_Contingency_Tables@contingency_table_all_roles <- DRESS_Contingency_Tables@contingency_table_all_roles[a >2,]
+DRESS_Contingency_Tables@contingency_table_ps_only <- DRESS_Contingency_Tables@contingency_table_ps_only[a > 2,]
+DRESS_Contingency_Tables@contingency_table_ps_ss_only <- DRESS_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+DRESS_Contingency_Tables@contingency_table_ps_ss_only <- merge(DRESS_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+DRESS_Contingency_Tables@contingency_table_ps_only <- merge(DRESS_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+DRESS_Contingency_Tables@contingency_table_all_roles <- merge(DRESS_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+DRESS_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(DRESS_Contingency_Tables@contingency_table_all_roles)
+DRESS_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(DRESS_Contingency_Tables@contingency_table_ps_only)
+DRESS_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( DRESS_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(DRESS_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(DRESS_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(DRESS_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Next, AGEP:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing AGEP
+AGEP_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = AGEP_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = AGEP_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = AGEP_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+AGEP_Contingency_Tables@contingency_table_all_roles <- AGEP_Contingency_Tables@contingency_table_all_roles[a >2,]
+AGEP_Contingency_Tables@contingency_table_ps_only <- AGEP_Contingency_Tables@contingency_table_ps_only[a > 2,]
+AGEP_Contingency_Tables@contingency_table_ps_ss_only <- AGEP_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+AGEP_Contingency_Tables@contingency_table_ps_ss_only <- merge(AGEP_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+AGEP_Contingency_Tables@contingency_table_ps_only <- merge(AGEP_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+AGEP_Contingency_Tables@contingency_table_all_roles <- merge(AGEP_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+AGEP_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(AGEP_Contingency_Tables@contingency_table_all_roles)
+AGEP_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(AGEP_Contingency_Tables@contingency_table_ps_only)
+AGEP_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( AGEP_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(AGEP_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(AGEP_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(AGEP_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Next, GBFDE:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing GBFDE
+GBFDE_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = GBFDE_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = GBFDE_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = GBFDE_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+GBFDE_Contingency_Tables@contingency_table_all_roles <- GBFDE_Contingency_Tables@contingency_table_all_roles[a >2,]
+GBFDE_Contingency_Tables@contingency_table_ps_only <- GBFDE_Contingency_Tables@contingency_table_ps_only[a > 2,]
+GBFDE_Contingency_Tables@contingency_table_ps_ss_only <- GBFDE_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+GBFDE_Contingency_Tables@contingency_table_ps_ss_only <- merge(GBFDE_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+GBFDE_Contingency_Tables@contingency_table_ps_only <- merge(GBFDE_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+GBFDE_Contingency_Tables@contingency_table_all_roles <- merge(GBFDE_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+GBFDE_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(GBFDE_Contingency_Tables@contingency_table_all_roles)
+GBFDE_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(GBFDE_Contingency_Tables@contingency_table_ps_only)
+GBFDE_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( GBFDE_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(GBFDE_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(GBFDE_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(GBFDE_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Now to make the contingency tables for pemphigoid spectrum:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing Pemphigoid
+Pemphigoid_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigoid_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigoid_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigoid_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+Pemphigoid_Contingency_Tables@contingency_table_all_roles <- Pemphigoid_Contingency_Tables@contingency_table_all_roles[a >2,]
+Pemphigoid_Contingency_Tables@contingency_table_ps_only <- Pemphigoid_Contingency_Tables@contingency_table_ps_only[a > 2,]
+Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only <- Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only <- merge(Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+Pemphigoid_Contingency_Tables@contingency_table_ps_only <- merge(Pemphigoid_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+Pemphigoid_Contingency_Tables@contingency_table_all_roles <- merge(Pemphigoid_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+Pemphigoid_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(Pemphigoid_Contingency_Tables@contingency_table_all_roles)
+Pemphigoid_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(Pemphigoid_Contingency_Tables@contingency_table_ps_only)
+Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(Pemphigoid_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(Pemphigoid_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(Pemphigoid_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Then for pemphigus:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing pemphigus
+Pemphigus_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigus_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigus_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = Pemphigus_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+Pemphigus_Contingency_Tables@contingency_table_all_roles <- Pemphigus_Contingency_Tables@contingency_table_all_roles[a >2,]
+Pemphigus_Contingency_Tables@contingency_table_ps_only <- Pemphigus_Contingency_Tables@contingency_table_ps_only[a > 2,]
+Pemphigus_Contingency_Tables@contingency_table_ps_ss_only <- Pemphigus_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+Pemphigus_Contingency_Tables@contingency_table_ps_ss_only <- merge(Pemphigus_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+Pemphigus_Contingency_Tables@contingency_table_ps_only <- merge(Pemphigus_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+Pemphigus_Contingency_Tables@contingency_table_all_roles <- merge(Pemphigus_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+Pemphigus_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(Pemphigus_Contingency_Tables@contingency_table_all_roles)
+Pemphigus_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(Pemphigus_Contingency_Tables@contingency_table_ps_only)
+Pemphigus_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( Pemphigus_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(Pemphigus_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(Pemphigus_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(Pemphigus_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+SDRIFE:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing GBFDE
+SDRIFE_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SDRIFE_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SDRIFE_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SDRIFE_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SDRIFE_Contingency_Tables@contingency_table_all_roles <- SDRIFE_Contingency_Tables@contingency_table_all_roles[a >2,]
+SDRIFE_Contingency_Tables@contingency_table_ps_only <- SDRIFE_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SDRIFE_Contingency_Tables@contingency_table_ps_ss_only <- SDRIFE_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SDRIFE_Contingency_Tables@contingency_table_ps_ss_only <- merge(SDRIFE_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SDRIFE_Contingency_Tables@contingency_table_ps_only <- merge(SDRIFE_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SDRIFE_Contingency_Tables@contingency_table_all_roles <- merge(SDRIFE_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+SDRIFE_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(SDRIFE_Contingency_Tables@contingency_table_all_roles)
+SDRIFE_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(SDRIFE_Contingency_Tables@contingency_table_ps_only)
+SDRIFE_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( SDRIFE_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(SDRIFE_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(SDRIFE_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(SDRIFE_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Systemic contact dermatitis:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing systemic contact dermatitis
+SystemicContact_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SystemicContact_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SystemicContact_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = SystemicContact_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SystemicContact_Contingency_Tables@contingency_table_all_roles <- SystemicContact_Contingency_Tables@contingency_table_all_roles[a >2,]
+SystemicContact_Contingency_Tables@contingency_table_ps_only <- SystemicContact_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SystemicContact_Contingency_Tables@contingency_table_ps_ss_only <- SystemicContact_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SystemicContact_Contingency_Tables@contingency_table_ps_ss_only <- merge(SystemicContact_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SystemicContact_Contingency_Tables@contingency_table_ps_only <- merge(SystemicContact_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SystemicContact_Contingency_Tables@contingency_table_all_roles <- merge(SystemicContact_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+## THere are only two cases of systemic contact, so they can't really be used for stats
+
+```
+
+Linear IgA Disease:
+
+```{r}
+# This would be faster with a wrapper function
+# Create the S4 object encompassing systemic contact dermatitis
+LinearIgA_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = LinearIgADisease_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = LinearIgADisease_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = LinearIgADisease_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+LinearIgA_Contingency_Tables@contingency_table_all_roles <- LinearIgA_Contingency_Tables@contingency_table_all_roles[a >2,]
+LinearIgA_Contingency_Tables@contingency_table_ps_only <- LinearIgA_Contingency_Tables@contingency_table_ps_only[a > 2,]
+LinearIgA_Contingency_Tables@contingency_table_ps_ss_only <- LinearIgA_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+LinearIgA_Contingency_Tables@contingency_table_ps_ss_only <- merge(LinearIgA_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+LinearIgA_Contingency_Tables@contingency_table_ps_only <- merge(LinearIgA_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+LinearIgA_Contingency_Tables@contingency_table_all_roles <- merge(LinearIgA_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+LinearIgA_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(LinearIgA_Contingency_Tables@contingency_table_all_roles)
+LinearIgA_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(LinearIgA_Contingency_Tables@contingency_table_ps_only)
+LinearIgA_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( LinearIgA_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(LinearIgA_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(LinearIgA_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(LinearIgA_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+Let's also do fixed drug eruption. There are two IDs.
+
+```{r}
+FDE_IDs <- c(36045217, 37320209)
+
+# This would be faster with a wrapper function
+# Create the S4 object encompassing Fixed Drug Eruption (nonbullous)
+FDE_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = FDE_IDs),
+contingency_table_ps_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = FDE_IDs, roles = c("PS")),
+contingency_table_ps_ss_only = grouped_outcome_contingency_table(drug_data = standard_case_drug, outcome_data = standard_case_outcome, outcome_group = FDE_IDs, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+FDE_Contingency_Tables@contingency_table_all_roles <- FDE_Contingency_Tables@contingency_table_all_roles[a >2,]
+FDE_Contingency_Tables@contingency_table_ps_only <- FDE_Contingency_Tables@contingency_table_ps_only[a > 2,]
+FDE_Contingency_Tables@contingency_table_ps_ss_only <- FDE_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+FDE_Contingency_Tables@contingency_table_ps_ss_only <- merge(FDE_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+FDE_Contingency_Tables@contingency_table_ps_only <- merge(FDE_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+FDE_Contingency_Tables@contingency_table_all_roles <- merge(FDE_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+FDE_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(FDE_Contingency_Tables@contingency_table_all_roles)
+FDE_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(FDE_Contingency_Tables@contingency_table_ps_only)
+FDE_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( FDE_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(FDE_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(FDE_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(FDE_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+##VISUALIZING CONTINGENCY TABLES
+
+Let's start with a Manhattan-style bar plot of IC025 values, which are generally used to detect a signal. We'll recombine this data to just include drugs with the PS role only, with a frequency of greater than 3.
+
+```{r}
+# Get separate contingency tables for each outcome:
+contingency_scar <- SCAR_Contingency_Tables@contingency_table_ps_only
+contingency_sjsten <- SJSTEN_Contingency_Tables@contingency_table_ps_only
+contingency_dress <- DRESS_Contingency_Tables@contingency_table_ps_only
+contingency_agep <- AGEP_Contingency_Tables@contingency_table_ps_only
+contingency_gbfde <- GBFDE_Contingency_Tables@contingency_table_ps_only
+contingency_pemphigoid <- Pemphigoid_Contingency_Tables@contingency_table_ps_only
+contingency_pemphigus <- Pemphigus_Contingency_Tables@contingency_table_ps_only
+contingency_SDRIFE <- SDRIFE_Contingency_Tables@contingency_table_ps_only
+contingency_systemiccontact <- SystemicContact_Contingency_Tables@contingency_table_ps_only
+contingency_LinearIgA <- LinearIgA_Contingency_Tables@contingency_table_ps_only
+contingency_FDE <- FDE_Contingency_Tables@contingency_table_ps_only
+
+# Add an outcome label to each table
+contingency_scar$outcome_label <- "SCAR"
+contingency_sjsten$outcome_label <- "SJS/TEN"
+contingency_dress$outcome_label <- "DRESS"
+contingency_agep$outcome_label <- "AGEP"
+contingency_gbfde$outcome_label <- "GBFDE"
+contingency_pemphigoid$outcome_label <- "Pemphigoid"
+contingency_pemphigus$outcome_label <- "Pemphigus"
+contingency_SDRIFE$outcome_label <- "SDRIFE"
+contingency_systemiccontact$outcome_label <- "Systemic Contact"
+contingency_FDE$outcome_label <- "FDE"
+
+```
+
+###Barplots
+
+Now, create a series of barplots. Note that an IC025 is generally considered a positive signal:
+
+```{r}
+pSCAR <- ggplot(data = contingency_scar[order(-IC025)][1:100, ], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "#FF7F00", color = "black") +  # Set bars to cornflower blue
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for SCAR",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, vjust = 0.3, hjust = 1, size = 8)) # Rotate labels and adjust size
+
+plot(pSCAR)
+```
+
+Next up, SJS-TEN:
+
+```{r}
+pSJSTEN <- ggplot(data = contingency_sjsten[order(-IC025)][1:50, ], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "red") +  # Set bars to red
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for SJS-TEN",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 9)) # Rotate labels and adjust size
+plot(pSJSTEN)
+```
+
+DRESS:
+
+```{r}
+pDRESS <- ggplot(data = contingency_dress[order(-IC025)][1:50, ], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "gold") +  # Set bars to red
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for DRESS",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 9)) # Rotate labels and adjust size
+
+plot(pDRESS)
+```
+
+AGEP:
+
+```{r}
+pAGEP <- ggplot(data = contingency_agep[order(-IC025)][1:50, ], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "forestgreen") +  # Set bars to forest green
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for AGEP",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 9)) # Rotate labels and adjust size
+
+plot(pAGEP)
+```
+
+Generalized bullous fixed drug eruption:
+
+```{r}
+pGBFDE <- ggplot(data = contingency_gbfde[contingency_gbfde$IC025 > 0,], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "purple") +  # Set bars to purple
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for GBFDE",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 11)) # Rotate labels and adjust size
+
+plot(pGBFDE)
+```
+
+Pemphigoid:
+
+```{r}
+ggplot(data = contingency_pemphigoid[contingency_pemphigoid$IC025 > 0,], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "lightgrey") +  # Set bars to purple
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for Pemphigoid",
+       x = "Drug",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 9)) # Rotate labels and adjust size
+```
+
+Pemphigus:
+
+```{r}
+ggplot(data = contingency_pemphigus[contingency_pemphigus$IC025 > 0,], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "darkgrey") +  # Set bars to purple
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for Pemphigus",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12)) # Rotate labels and adjust size
+```
+
+SDRIFE:
+
+```{r}
+ggplot(data = contingency_SDRIFE[contingency_SDRIFE$IC025 > 0,], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "orange", color = "black") +  # Set bars to purple
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for SDRIFE",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12)) # Rotate labels and adjust size
+```
+
+There are two cases total in FAERS, so no graph was generated.
+
+Finally FDE (non-bullous)
+
+```{r}
+ggplot(data = contingency_FDE[contingency_FDE$IC025 > 0,], aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "black") +  # Set bars to purple
+  theme_bw() +  # Use theme_bw for sharp lines and a clean look
+  labs(title = "IC025 (Information Component) for Fixed Drug Eruption",
+       x = "",
+       y = "IC025") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12)) # Rotate labels and adjust size
+```
+
+## OVERLAP CONDITIONS
+
+###Generate patient IDs
+
+One other piece of information that would be useful is looking at overlaps between outcomes.
+
+```{r}
+# Extract patient IDs for each set of outcomes
+compositeid_SCAR <- unique(standard_case_outcome[outcome_concept_id %in% SCAR_IDs, .(compositeid)])
+compositeid_SJSTEN <- unique(standard_case_outcome[outcome_concept_id %in% SJSTEN_IDs, .(compositeid)])
+compositeid_DRESS <- unique(standard_case_outcome[outcome_concept_id %in% DRESS_IDs, .(compositeid)])
+compositeid_AGEP <- unique(standard_case_outcome[outcome_concept_id %in% AGEP_IDs, .(compositeid)])
+compositeid_GBFDE <- unique(standard_case_outcome[outcome_concept_id %in% GBFDE_IDs, .(compositeid)])
+compositeid_pemphigus <- unique(standard_case_outcome[outcome_concept_id %in% Pemphigus_IDs, .(compositeid)])
+compositeid_pemphigoid <- unique(standard_case_outcome[outcome_concept_id %in% Pemphigoid_IDs, .(compositeid)])
+compositeid_SDRIFE <- unique(standard_case_outcome[outcome_concept_id %in% SDRIFE_IDs, .(compositeid)])
+compositeid_FDE <- unique(standard_case_outcome[outcome_concept_id %in% FDE_IDs, .(compositeid)])
+compositeid_LinearIgA <- unique(standard_case_outcome[outcome_concept_id %in% LinearIgADisease_IDs, .(compositeid)])
+compositeid_systemiccontact <- unique(standard_case_outcome[outcome_concept_id %in% SystemicContact_IDs, .(compositeid)])
+```
+
+There are two different sets of overlap conditions that are useful to think about. First is the restricted case of SCAR (SJS, DRESS, GBFDE, AGEP). Then is the more general case, including immunobullous disease
+
+```{r}
+# Step 1: Combine all unique patient IDs
+all_ids <- unique(c(compositeid_SJSTEN$compositeid, compositeid_DRESS$compositeid,
+                  compositeid_AGEP$compositeid, compositeid_GBFDE$compositeid, compositeid_pemphigus$compositeid, compositeid_pemphigoid$compositeid, compositeid_SDRIFE$compositeid, compositeid_FDE$compositeid, compositeid_LinearIgA$compositeid, compositeid_systemiccontact$compositeid))
+
+# Step 2: Create an empty binary matrix
+binary_matrix <- data.table(compositeid = all_ids)
+
+# Step 3: For each group, add a binary column indicating presence (1) or absence (0)
+binary_matrix[, SJSTEN := as.integer(compositeid %in% compositeid_SJSTEN$compositeid)]
+binary_matrix[, DRESS := as.integer(compositeid %in% compositeid_DRESS$compositeid)]
+binary_matrix[, AGEP := as.integer(compositeid %in% compositeid_AGEP$compositeid)]
+binary_matrix[, GBFDE := as.integer(compositeid %in% compositeid_GBFDE$compositeid)]
+binary_matrix[, pemphigus := as.integer(compositeid %in% compositeid_pemphigus$compositeid)]
+binary_matrix[, pemphigoid := as.integer(compositeid %in% compositeid_pemphigoid$compositeid)]
+binary_matrix[, SDRIFE := as.integer(compositeid %in% compositeid_SDRIFE$compositeid)]
+binary_matrix[, FDE := as.integer(compositeid %in% compositeid_FDE$compositeid)]
+binary_matrix[, LABD := as.integer(compositeid %in% compositeid_LinearIgA$compositeid)]
+binary_matrix[, SystemicContact := as.integer(compositeid %in% compositeid_systemiccontact$compositeid)]
+
+# View the binary presence matrix
+binary_matrix
+```
+
+Now that we have the binary presence matrix, we can make the plot. We will make two - one just for SCAR, one for all conditions.
+
+```{r}
+# Step 1: Create the overlap matrix for SCAR groups, including the diagonal
+overlap_counts_SCAR <- matrix(
+  c(
+    # SJSTEN row
+    sum(binary_matrix$SJSTEN), sum(binary_matrix$SJSTEN & binary_matrix$DRESS), 
+    sum(binary_matrix$SJSTEN & binary_matrix$AGEP), sum(binary_matrix$SJSTEN & binary_matrix$GBFDE),
+
+    # DRESS row
+    sum(binary_matrix$DRESS & binary_matrix$SJSTEN), sum(binary_matrix$DRESS), 
+    sum(binary_matrix$DRESS & binary_matrix$AGEP), sum(binary_matrix$DRESS & binary_matrix$GBFDE),
+
+    # AGEP row
+    sum(binary_matrix$AGEP & binary_matrix$SJSTEN), sum(binary_matrix$AGEP & binary_matrix$DRESS), 
+    sum(binary_matrix$AGEP), sum(binary_matrix$AGEP & binary_matrix$GBFDE),
+
+    # GBFDE row
+    sum(binary_matrix$GBFDE & binary_matrix$SJSTEN), sum(binary_matrix$GBFDE & binary_matrix$DRESS), 
+    sum(binary_matrix$GBFDE & binary_matrix$AGEP), sum(binary_matrix$GBFDE)
+  ),
+  nrow = 4, byrow = TRUE
+)
+
+# Assign column and row names for clarity
+colnames(overlap_counts_SCAR) <- c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+rownames(overlap_counts_SCAR) <- c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+
+# Convert the matrix to a data.table for text labels and remove diagonal for coloring
+melted_overlap <- as.data.table(as.table(overlap_counts_SCAR))
+
+# Rename columns for clarity
+setnames(melted_overlap, c("Var1", "Var2", "Freq"))
+
+# Remove diagonal from coloring (but keep it for text labels)
+melted_overlap_no_diag <- melted_overlap[Var1 != Var2, ]
+
+# Step 2: Create the levelplot (without diagonal values in the color scale)
+levelplot_matrix <- overlap_counts_SCAR
+diag(levelplot_matrix) <- NA  # Set diagonal values to NA for color scaling purposes
+
+# Plot using levelplot from the lattice package
+pOverlap <- levelplot(levelplot_matrix, 
+          scales = list(x = list(rot = 90, cex = 1),  # Rotate x-axis labels and increase label size
+                        y = list(cex = 1)),  # Increase y-axis label size
+          col.regions = colorRampPalette(c("white", "steelblue")),  # Color scale for non-diagonal
+          at = pretty(melted_overlap_no_diag$Freq),  # Define breaks for color scale
+          main = list("Co-reporting Between SCAR", 
+                      cex = 1.5),  # Increase the title size
+          xlab = NULL,  # Remove x-axis label
+          ylab = NULL,  # Remove y-axis label
+          panel = function(...) {
+              panel.levelplot(...)
+              # Add black borders around each box
+              panel.rect(x = rep(1:4, each = 4), y = rep(1:4, times = 4), 
+                         height = 1, width = 1, border = "black", lwd = 2)
+              # Add the text labels for all cells (keeping the text black)
+              for (i in 1:4) {
+                  for (j in 1:4) {
+                      # If diagonal, shade the cell grey
+                      if (i == j) {
+                          panel.rect(x = i, y = j, height = 1, width = 1, col = "lightgrey", border = "black")
+                      }
+                      # Add text (black for all cells)
+                      panel.text(i, j, labels = round(overlap_counts_SCAR[i, j], 1), cex = 1, col = "black")
+                  }
+              }
+          },
+          par.settings = list(axis.text = list(cex = 1),  # Increase axis label size
+                              strip.background = list(col = "lightgrey"),  # Light grey strip for titles
+                              panel.background = list(col = "white")))
+
+```
+
+Now do the same for all 10 groups:
+
+```{r}
+# Step 1: Compute the overlap matrix for all groups
+overlap_counts_all <- matrix(
+  c(
+    # SJSTEN row
+    sum(binary_matrix$SJSTEN), sum(binary_matrix$SJSTEN & binary_matrix$DRESS), 
+    sum(binary_matrix$SJSTEN & binary_matrix$AGEP), sum(binary_matrix$SJSTEN & binary_matrix$GBFDE),
+    sum(binary_matrix$SJSTEN & binary_matrix$pemphigus), sum(binary_matrix$SJSTEN & binary_matrix$pemphigoid),
+    sum(binary_matrix$SJSTEN & binary_matrix$SDRIFE), sum(binary_matrix$SJSTEN & binary_matrix$FDE),
+    sum(binary_matrix$SJSTEN & binary_matrix$LABD), sum(binary_matrix$SJSTEN & binary_matrix$SystemicContact),
+    
+    # DRESS row
+    sum(binary_matrix$DRESS & binary_matrix$SJSTEN), sum(binary_matrix$DRESS), 
+    sum(binary_matrix$DRESS & binary_matrix$AGEP), sum(binary_matrix$DRESS & binary_matrix$GBFDE),
+    sum(binary_matrix$DRESS & binary_matrix$pemphigus), sum(binary_matrix$DRESS & binary_matrix$pemphigoid),
+    sum(binary_matrix$DRESS & binary_matrix$SDRIFE), sum(binary_matrix$DRESS & binary_matrix$FDE),
+    sum(binary_matrix$DRESS & binary_matrix$LABD), sum(binary_matrix$DRESS & binary_matrix$SystemicContact),
+    
+    # AGEP row
+    sum(binary_matrix$AGEP & binary_matrix$SJSTEN), sum(binary_matrix$AGEP & binary_matrix$DRESS), 
+    sum(binary_matrix$AGEP), sum(binary_matrix$AGEP & binary_matrix$GBFDE),
+    sum(binary_matrix$AGEP & binary_matrix$pemphigus), sum(binary_matrix$AGEP & binary_matrix$pemphigoid),
+    sum(binary_matrix$AGEP & binary_matrix$SDRIFE), sum(binary_matrix$AGEP & binary_matrix$FDE),
+    sum(binary_matrix$AGEP & binary_matrix$LABD), sum(binary_matrix$AGEP & binary_matrix$SystemicContact),
+    
+    # GBFDE row
+    sum(binary_matrix$GBFDE & binary_matrix$SJSTEN), sum(binary_matrix$GBFDE & binary_matrix$DRESS), 
+    sum(binary_matrix$GBFDE & binary_matrix$AGEP), sum(binary_matrix$GBFDE),
+    sum(binary_matrix$GBFDE & binary_matrix$pemphigus), sum(binary_matrix$GBFDE & binary_matrix$pemphigoid),
+    sum(binary_matrix$GBFDE & binary_matrix$SDRIFE), sum(binary_matrix$GBFDE & binary_matrix$FDE),
+    sum(binary_matrix$GBFDE & binary_matrix$LABD), sum(binary_matrix$GBFDE & binary_matrix$SystemicContact),
+    
+    # Pemphigus row
+    sum(binary_matrix$pemphigus & binary_matrix$SJSTEN), sum(binary_matrix$pemphigus & binary_matrix$DRESS), 
+    sum(binary_matrix$pemphigus & binary_matrix$AGEP), sum(binary_matrix$pemphigus & binary_matrix$GBFDE),
+    sum(binary_matrix$pemphigus), sum(binary_matrix$pemphigus & binary_matrix$pemphigoid),
+    sum(binary_matrix$pemphigus & binary_matrix$SDRIFE), sum(binary_matrix$pemphigus & binary_matrix$FDE),
+    sum(binary_matrix$pemphigus & binary_matrix$LABD), sum(binary_matrix$pemphigus & binary_matrix$SystemicContact),
+    
+    # Pemphigoid row
+    sum(binary_matrix$pemphigoid & binary_matrix$SJSTEN), sum(binary_matrix$pemphigoid & binary_matrix$DRESS), 
+    sum(binary_matrix$pemphigoid & binary_matrix$AGEP), sum(binary_matrix$pemphigoid & binary_matrix$GBFDE),
+    sum(binary_matrix$pemphigoid & binary_matrix$pemphigus), sum(binary_matrix$pemphigoid),
+    sum(binary_matrix$pemphigoid & binary_matrix$SDRIFE), sum(binary_matrix$pemphigoid & binary_matrix$FDE),
+    sum(binary_matrix$pemphigoid & binary_matrix$LABD), sum(binary_matrix$pemphigoid & binary_matrix$SystemicContact),
+    
+    # SDRIFE row
+    sum(binary_matrix$SDRIFE & binary_matrix$SJSTEN), sum(binary_matrix$SDRIFE & binary_matrix$DRESS), 
+    sum(binary_matrix$SDRIFE & binary_matrix$AGEP), sum(binary_matrix$SDRIFE & binary_matrix$GBFDE),
+    sum(binary_matrix$SDRIFE & binary_matrix$pemphigus), sum(binary_matrix$SDRIFE & binary_matrix$pemphigoid),
+    sum(binary_matrix$SDRIFE), sum(binary_matrix$SDRIFE & binary_matrix$FDE),
+    sum(binary_matrix$SDRIFE & binary_matrix$LABD), sum(binary_matrix$SDRIFE & binary_matrix$SystemicContact),
+    
+    # FDE row
+    sum(binary_matrix$FDE & binary_matrix$SJSTEN), sum(binary_matrix$FDE & binary_matrix$DRESS), 
+    sum(binary_matrix$FDE & binary_matrix$AGEP), sum(binary_matrix$FDE & binary_matrix$GBFDE),
+    sum(binary_matrix$FDE & binary_matrix$pemphigus), sum(binary_matrix$FDE & binary_matrix$pemphigoid),
+    sum(binary_matrix$FDE & binary_matrix$SDRIFE), sum(binary_matrix$FDE),
+    sum(binary_matrix$FDE & binary_matrix$LABD), sum(binary_matrix$FDE & binary_matrix$SystemicContact),
+    
+    # LABD row
+    sum(binary_matrix$LABD & binary_matrix$SJSTEN), sum(binary_matrix$LABD & binary_matrix$DRESS), 
+    sum(binary_matrix$LABD & binary_matrix$AGEP), sum(binary_matrix$LABD & binary_matrix$GBFDE),
+    sum(binary_matrix$LABD & binary_matrix$pemphigus), sum(binary_matrix$LABD & binary_matrix$pemphigoid),
+    sum(binary_matrix$LABD & binary_matrix$SDRIFE), sum(binary_matrix$LABD & binary_matrix$FDE),
+    sum(binary_matrix$LABD), sum(binary_matrix$LABD & binary_matrix$SystemicContact),
+    
+    # Systemic Contact row
+    sum(binary_matrix$SystemicContact & binary_matrix$SJSTEN), sum(binary_matrix$SystemicContact & binary_matrix$DRESS), 
+    sum(binary_matrix$SystemicContact & binary_matrix$AGEP), sum(binary_matrix$SystemicContact & binary_matrix$GBFDE),
+    sum(binary_matrix$SystemicContact & binary_matrix$pemphigus), sum(binary_matrix$SystemicContact & binary_matrix$pemphigoid),
+    sum(binary_matrix$SystemicContact & binary_matrix$SDRIFE), sum(binary_matrix$SystemicContact & binary_matrix$FDE),
+    sum(binary_matrix$SystemicContact & binary_matrix$LABD), sum(binary_matrix$SystemicContact)
+  ),
+  nrow = 10, byrow = TRUE
+)
+
+# Step 2: Add column and row names
+colnames(overlap_counts_all) <- c("SJSTEN", "DRESS", "AGEP", "GBFDE", "Pemphigus", "Pemphigoid", "SDRIFE", "FDE", "LABD", "Systemic Contact")
+rownames(overlap_counts_all) <- colnames(overlap_counts_all)
+
+# Step 3: Prepare for levelplot
+melted_overlap <- as.data.table(as.table(overlap_counts_all))
+setnames(melted_overlap, c("Var1", "Var2", "Freq"))
+melted_overlap_no_diag <- melted_overlap[Var1 != Var2]
+
+levelplot_matrix_all <- overlap_counts_all
+diag(levelplot_matrix_all) <- NA  # Ignore diagonal values for color scaling
+
+# Step 4: Create the levelplot
+pOverlapAll <- levelplot(levelplot_matrix_all,
+          scales = list(x = list(rot = 90, cex = 1), y = list(cex = 1)),
+          col.regions = colorRampPalette(c("white", "steelblue")),
+          at = pretty(melted_overlap_no_diag$Freq, na.rm = TRUE),
+          main = list("Co-reporting Between Cutaneous Adverse Reactions", cex = 1.5),
+          xlab = NULL,
+          ylab = NULL,
+          panel = function(...) {
+              panel.levelplot(...)
+              for (i in 1:10) {
+                  for (j in 1:10) {
+                      panel.rect(x = i, y = j, height = 1, width = 1, border = "black", lwd = 2)
+                      if (i == j) {
+                          # Diagonal: Display value in grey
+                          panel.rect(x = i, y = j, height = 1, width = 1, col = "lightgrey", border = "black")
+                          panel.text(i, j, labels = round(overlap_counts_all[i, j], 1), cex = 0.8, col = "black")
+                      } else {
+                          # Off-diagonal: Display value in black
+                          panel.text(i, j, labels = round(overlap_counts_all[i, j], 1), cex = 0.8, col = "black")
+                      }
+                  }
+              }
+          })
+
+```
+
+Very interesting - there appears to be a substantial population of overlap patients. Let's analyze this further! To do this, we'll need a function that can create contingency tables from a list of patients.
+
+```{r}
+contingency_table_from_ptids <- function(drug_data, outcome_data, case_ids, roles = c("PS", "SS", "C", "I")) {
+  # Step 0: Make sure the case_ids passed in are unique
+  case_ids <- unique(case_ids)
+  
+  # Step 1: Identify all unique IDs (patients) in both datasets
+  unique_exposed_ids <- unique(drug_data$compositeid)  # Unique patients with drug information in the database
+  unique_outcome_ids <- unique(outcome_data$compositeid)  # Unique patients with any outcome in the database
+  
+  # Step 2: Get the total number of unique patients from the union of drug and outcome datasets
+  all_patients <- unique(c(unique_exposed_ids, unique_outcome_ids))
+  total_patients <- length(all_patients)
+  
+  # Step 3: Filter the drug data based on the selected roles and keep necessary columns
+  drug_data <- unique(as.data.table(drug_data)[role_cod %in% roles, .(compositeid, drug_concept_id, role_cod)])
+ 
+  # Step 4: Create a contingency table from drug data
+  contingency_table <- drug_data[, .(
+    exposed_patients = uniqueN(compositeid),     # Patients exposed to the drug
+    outcome_patients = uniqueN(case_ids),        # Total patients with outcome (as all case_ids have the outcome)
+    a = uniqueN(intersect(compositeid, case_ids)) # Patients exposed and with outcome
+  ), by = drug_concept_id]
+  
+  # Step 5: Calculate b, c, and d for the 2x2 contingency table
+  contingency_table[, b := exposed_patients - a] # Patients exposed but without outcome
+  contingency_table[, c := outcome_patients - a] # Patients with outcome but not exposed
+  contingency_table[, d := total_patients - (a + b + c)] # Patients neither exposed nor with outcome
+  
+  # Return the contingency table
+  return(contingency_table)
+}
+```
+
+Perfect. Now we will calculate stats for SJSTEN/DRESS Overlap, DRESS/AGEP Overlap, and SJS/TEN/AGEP Overlap.
+
+```{r}
+# Patient IDs for Overlapping Conditions
+compositeid_SJSTEN_DRESS_Overlap <- unique(intersect(compositeid_DRESS$compositeid, compositeid_SJSTEN$compositeid))
+compositeid_DRESS_AGEP_Overlap <- unique(intersect(compositeid_DRESS$compositeid, compositeid_AGEP$compositeid))
+compositeid_SJSTEN_AGEP_Overlap <- unique(intersect(compositeid_SJSTEN$compositeid, compositeid_AGEP$compositeid))
+
+# Create the S4 object for SJSTEN/DRESS Overlap
+SJSTEN_DRESS_Overlap_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_DRESS_Overlap),
+contingency_table_ps_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_DRESS_Overlap, roles = c("PS")),
+contingency_table_ps_ss_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_DRESS_Overlap, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles <- SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles[a >2,]
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only <- SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- merge(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only <- merge(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles <- merge(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles)
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only)
+SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+
+
+# Create the S4 object for DRESS/AGEP Overlap
+DRESS_AGEP_Overlap_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_DRESS_AGEP_Overlap),
+contingency_table_ps_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_DRESS_AGEP_Overlap, roles = c("PS")),
+contingency_table_ps_ss_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_DRESS_AGEP_Overlap, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles[a >2,]
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only[a > 2,]
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- merge(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- merge(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- merge(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles)
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only)
+DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+
+# Create the S4 object for DRESS/AGEP Overlap
+SJSTEN_AGEP_Overlap_Contingency_Tables <- new("DrugContingencyTables",
+contingency_table_all_roles = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_AGEP_Overlap),
+contingency_table_ps_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_AGEP_Overlap, roles = c("PS")),
+contingency_table_ps_ss_only = contingency_table_from_ptids(drug_data = standard_case_drug, outcome_data = standard_case_outcome, case_ids = compositeid_SJSTEN_AGEP_Overlap, roles = c("PS", "SS")))
+
+# Remove all rows with a < 3
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles[a >2,]
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only[a > 2,]
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only[a>2,]
+
+# Add drug names
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- merge(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- merge(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- merge(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles, Updated_Drug_Dictionary, by.x = "drug_concept_id", by.y = "drug_concept_id", all.x = TRUE)
+
+# Add stats to the S4 object
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles <- process_contingency_table(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles)
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only <- process_contingency_table(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only)
+SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only <- process_contingency_table( SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only)
+
+# Turn drug_concept_id to just "drug" for consistency
+colnames(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_all_roles)[1] <- "drug"
+colnames(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only)[1] <- "drug"
+colnames(SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_ss_only)[1] <- "drug"
+```
+
+That's done, let's do some graphs! We'll plot IC025 with a \> 2 as before. First we'll separate out contingency tables like before:
+
+```{r}
+# Get separate contingency tables for each outcome:
+contingency_SJSTEN_AGEP_Overlap <- SJSTEN_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only
+contingency_SJSTEN_DRESS_Overlap <- SJSTEN_DRESS_Overlap_Contingency_Tables@contingency_table_ps_only
+contingency_DRESS_AGEP_Overlap <- DRESS_AGEP_Overlap_Contingency_Tables@contingency_table_ps_only
+```
+
+First up, SJS-TEN/AGEP Overlap:
+
+```{r}
+pSJSTEN_AGEP <- ggplot(data = contingency_SJSTEN_AGEP_Overlap[contingency_SJSTEN_AGEP_Overlap$IC025 > 0,], 
+                       aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  # Add black outlines to bars
+  geom_bar(stat = "identity", position = "dodge", fill = "honeydew3", color = "black") +  # Black outlines added
+  
+  # Add text labels above bars
+  geom_text(aes(label = a), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, size = 6) +  
+  
+  # Theme and axis adjustments
+  theme_bw() +  
+  labs(title = "SJS-TEN/AGEP Overlap",
+       y = "IC025",
+       x = "") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.y = element_text(size = 8)) +  
+  
+  # Scale y-axis to 110% of max value
+  ylim(0, max(contingency_SJSTEN_DRESS_Overlap$IC025) * 1.03)
+```
+
+Next up, SJS-TEN/DRESS Overlap
+
+```{r}
+pSJSTEN_DRESS <- ggplot(data = contingency_SJSTEN_DRESS_Overlap[contingency_SJSTEN_DRESS_Overlap$IC025 > 0,], 
+                        aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "salmon2", color = "black") +
+  # Bar colors
+  geom_text(aes(label = a), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, size = 4) +  # Text above bars
+  theme_bw() +  # Clean theme
+  labs(title = "SJS-TEN/DRESS Overlap",
+       y = "IC025",
+       x = "") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.y = element_text(size = 8)) +  # Adjust axis text
+  ylim(0, max(contingency_SJSTEN_DRESS_Overlap$IC025) * 1.15)  # Scale y-axis to 110% of max value
+```
+
+Finally, AGEP/DRESS Overlap
+
+```{r}
+pAGEP_DRESS <- ggplot(data = contingency_DRESS_AGEP_Overlap[contingency_DRESS_AGEP_Overlap$IC025 > 0,], 
+       aes(x = reorder(drug_name, -IC025), y = IC025)) +
+  geom_bar(stat = "identity", position = "dodge", fill = "turquoise2", color = "black") +  # Bars in turquoise
+  geom_text(aes(label = a), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, size = 6) +  # Text above bars
+  theme_bw() +  # Clean theme
+  labs(title = "DRESS/AGEP Overlap",
+       y = "IC025",
+       x = "") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 12), axis.title.y = element_text(size = 16), axis.text.y = element_text(size = 8)) +  # Adjust axis text
+  ylim(0, max(contingency_SJSTEN_DRESS_Overlap$IC025)*0.9)  # Scale y-axis to 110% of max value
+```
+
+Finally, lets generate an UpSet plot to show overlaps between all sets:
+
+```{r, echo=FALSE, fig.cap="UpSet Plot of Patient ID Overlaps"}
+
+# Fix the labels for the binary matrix
+colnames(binary_matrix)[6] <- "Pemphigus"
+colnames(binary_matrix)[7] <- "Pemphigoid"
+colnames(binary_matrix)[11] <- "Systemic Contact"
+
+# Generate an UpSet plot using ComplexUpset
+library(ComplexUpset)
+
+pUpsetSCAR <- upset(
+  binary_matrix,
+  intersect = c("SJSTEN", "DRESS", "AGEP", "GBFDE"),
+  set_sizes = (
+    upset_set_size() +
+      geom_text(stat = 'count', aes(label = after_stat(count)), hjust = 1.1) +
+      expand_limits(y = 35000)
+  ),
+  themes = upset_modify_themes(
+    list('intersections_matrix' = theme(text = element_text(size = 16)))
+  )
+)
+
+```
+
+Now generate the same UpSet plot for all groups:
+
+```{r}
+# Generate an UpSet plot for all groups
+pUpsetAll <- upset(
+  binary_matrix,
+  intersect = c("SJSTEN", "DRESS", "AGEP", "GBFDE", "Pemphigus", "Pemphigoid", "SDRIFE", "FDE", "LABD", "Systemic Contact"), base_annotations = list('Intersection size'=intersection_size(counts=FALSE)), set_sizes=(
+        upset_set_size()
+        + geom_text(aes(label=after_stat(count)), hjust=1.1, stat='count'))+expand_limits(y=35000))
+```
+
+###Stats for Overlap
+
+An interesting question is - how real are these overlaps? We can consider this question from two angles.
+
+1.  We can measure the probability that conditions x and y would overlap solely by chance (using the binomial or hypergeometric distribution)
+
+2.  Pemphigoid and pemphigus are often confused, but are disjoint conditions. We can use that overlap rate as a baseline.
+
+```{r}
+# Total counts for each condition
+totals <- rowSums(overlap_counts_all)
+
+# Total number of patients
+total_patients <- 17201564
+
+# Initialize matrices for p-values
+binomial_p_values <- matrix(NA, nrow = nrow(overlap_counts_all), ncol = ncol(overlap_counts_all))
+hypergeometric_p_values <- matrix(NA, nrow = nrow(overlap_counts_all), ncol = ncol(overlap_counts_all))
+
+# Calculate p-values
+for (i in 1:nrow(overlap_counts_all)) {
+  for (j in 1:ncol(overlap_counts_all)) {
+    if (i != j) {  # Exclude diagonal
+      # Observed and expected overlap
+      observed <- overlap_counts_all[i, j]
+      expected <- (totals[i] * totals[j]) / total_patients
+      
+      # Binomial test (one-sided)
+      prob <- expected / total_patients
+      binomial_p_values[i, j] <- binom.test(observed, total_patients, prob, alternative = "greater")$p.value
+      
+      # Hypergeometric test (one-sided)
+      hypergeometric_p_values[i, j] <- phyper(
+        observed - 1, totals[i], total_patients - totals[i], totals[j], lower.tail = FALSE
+      )
+    }
+  }
+}
+
+# Apply Benjamini-Hochberg correction (FDR)
+binomial_p_values_adjusted <- p.adjust(as.vector(binomial_p_values), method = "BH")
+hypergeometric_p_values_adjusted <- p.adjust(as.vector(hypergeometric_p_values), method = "BH")
+
+# Reshape adjusted p-values back into matrices
+binomial_p_values_adjusted <- matrix(binomial_p_values_adjusted, nrow = nrow(overlap_counts_all))
+hypergeometric_p_values_adjusted <- matrix(hypergeometric_p_values_adjusted, nrow = nrow(overlap_counts_all))
+
+rownames(binomial_p_values_adjusted) <- colnames(binomial_p_values_adjusted) <- rownames(overlap_counts_all)
+rownames(hypergeometric_p_values_adjusted) <- colnames(hypergeometric_p_values_adjusted) <- rownames(overlap_counts_all)
+
+# Combine results into a tidy data frame
+results_df <- data.frame(
+  Condition1 = character(),
+  Condition2 = character(),
+  Observed_Overlap = numeric(),
+  Expected_Overlap = numeric(),
+  Binomial_P_Value = numeric(),
+  Hypergeometric_P_Value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Populate the data frame with pairwise comparisons (upper triangle only)
+for (i in 1:nrow(overlap_counts_all)) {
+  for (j in 1:ncol(overlap_counts_all)) {
+    if (i < j) {  # Only include upper triangle
+      observed <- overlap_counts_all[i, j]
+      expected <- (totals[i] * totals[j]) / total_patients
+      binomial_p <- binomial_p_values_adjusted[i, j]
+      hypergeometric_p <- hypergeometric_p_values_adjusted[i, j]
+      
+      results_df <- rbind(results_df, data.frame(
+        Condition1 = rownames(overlap_counts_all)[i],
+        Condition2 = colnames(overlap_counts_all)[j],
+        Observed_Overlap = observed,
+        Expected_Overlap = expected,
+        Binomial_P_Value = binomial_p,
+        Hypergeometric_P_Value = hypergeometric_p
+      ))
+    }
+  }
+}
+
+# Order the data frame by ascending p-values (Binomial, then Hypergeometric)
+results_df <- results_df[order(results_df$Binomial_P_Value, results_df$Hypergeometric_P_Value), ]
+
+# Renumber the rows
+row.names(results_df) <- 1:nrow(results_df)
+
+# Display the final results
+print(results_df)
+```
+
+Add these p-values to the levelplot:
+
+```{r}
+# Step 1: Prepare P-Value Matrix (Binomial or Hypergeometric)
+p_value_matrix <- matrix(binomial_p_values_adjusted, nrow = nrow(overlap_counts_all))
+diag(p_value_matrix) <- NA  # Exclude diagonal values from display
+
+# Step 2: Prepare for levelplot
+melted_overlap <- as.data.table(as.table(overlap_counts_all))
+setnames(melted_overlap, c("Var1", "Var2", "Freq"))
+melted_overlap_no_diag <- melted_overlap[Var1 != Var2]
+
+levelplot_matrix_all <- overlap_counts_all
+diag(levelplot_matrix_all) <- NA  # Ignore diagonal values for color scaling
+
+# Step 3: Create the levelplot with p-values
+pOverlapAll <- levelplot(levelplot_matrix_all,
+          scales = list(x = list(rot = 90, cex = 1), y = list(cex = 1)),
+          col.regions = colorRampPalette(c("white", "steelblue")),
+          at = pretty(melted_overlap_no_diag$Freq, na.rm = TRUE),
+          main = list("Co-reporting Between Cutaneous ADR", cex = 1.5),
+          xlab = NULL,
+          ylab = NULL,
+          panel = function(...) {
+              panel.levelplot(...)
+              for (i in 1:10) {
+                  for (j in 1:10) {
+                      panel.rect(x = i, y = j, height = 1, width = 1, border = "black", lwd = 2)
+                      if (i == j) {
+                          # Diagonal: Display value in grey
+                          panel.rect(x = i, y = j, height = 1, width = 1, col = "lightgrey", border = "black")
+                          panel.text(i, j, labels = round(overlap_counts_all[i, j], 1), cex = 0.8, col = "black")
+                      } else {
+                          # Off-diagonal: Display overlap count and p-value
+                          overlap_text <- paste0("N: ", round(overlap_counts_all[i, j], 1))
+                          if (!is.na(p_value_matrix[i, j]) && p_value_matrix[i, j] < 1e-207) {
+                              p_value_text <- "p: < 1e-207"
+                          } else {
+                              p_value_text <- paste0("p: ", signif(p_value_matrix[i, j], digits = 3))
+                          }
+                          panel.text(i, j, labels = paste0(overlap_text, "\n", p_value_text), cex = 0.6, col = "black")
+                      }
+                  }
+              }
+          })
+
+# Step 4: Print the plot
+print(pOverlapAll)
+```
+
+###Permutation Testing for Overlaps
+
+The binomial and hypergeometric tests are parametric. Let's do this non-parametrically, using permutation testing. This will take three steps
+- Within SCAR, permute labels for patients (imagine the SCAR labels across the top and each row is a patient, now imagine a slot machine/shuffle within each column), then compute a permutation p-value
+- Within cutaneous ADR, permute labels and compute a permutation p-value
+- For the entirety of the FAERS dataset (fill it out with zeros, there's a total of 17201564 patients in the dataset), permute labels and compute a permutation p-value
+
+```{r}
+# Function for full-table permutation, binomial, and hypergeometric testing
+full_table_perm_binom_hypergeom_test <- function(binary_matrix, n_perm = 10000, seed = 42) {
+  
+  set.seed(seed)
+
+  # Get all condition names (excluding patient ID)
+  condition_names <- setdiff(names(binary_matrix), "compositeid")
+
+  # Get all unique pairs of conditions
+  condition_pairs <- combn(condition_names, 2, simplify = FALSE)
+
+  # Number of condition pairs
+  num_pairs <- length(condition_pairs)
+
+  # Print initial message
+  message(sprintf("Running full-table permutation test with %d condition pairs...", num_pairs))
+
+  # Function to compute observed overlaps (before permutation)
+  compute_overlap <- function(df) {
+    map_dfr(condition_pairs, function(pair) {
+      data.frame(
+        Condition1 = pair[1],
+        Condition2 = pair[2],
+        Observed_Count = sum(df[[pair[1]]] == 1 & df[[pair[2]]] == 1)
+      )
+    })
+  }
+  
+  observed_results <- compute_overlap(binary_matrix)
+
+  # Function to permute entire SCAR matrix
+  permute_scar_matrix <- function(df) {
+    permuted_df <- copy(df)
+    
+    # Shuffle all SCAR conditions for all patients at once
+    for (cond in condition_names) {
+      permuted_df[[cond]] <- sample(permuted_df[[cond]])
+    }
+    
+    return(permuted_df)
+  }
+
+  # Run full-table permutations
+  perm_results <- pbapply::pbreplicate(n_perm, {
+    permuted_df <- permute_scar_matrix(binary_matrix)
+    compute_overlap(permuted_df)$Observed_Count  # Extract pairwise overlaps
+  })
+
+  # Binomial test function
+  binom_test <- function(df, cond1, cond2) {
+    n_total <- nrow(df)  # Total patients
+    n1 <- sum(df[[cond1]])  # Total cases of condition1
+    n2 <- sum(df[[cond2]])  # Total cases of condition2
+    expected_overlap <- (n1 / n_total) * (n2 / n_total) * n_total  # Expected by chance
+    observed <- compute_overlap(df) %>% filter(Condition1 == cond1 & Condition2 == cond2) %>% pull(Observed_Count)
+    binom_p <- binom.test(observed, n_total, expected_overlap / n_total, alternative = "greater")$p.value
+    return(binom_p)
+  }
+
+  # Hypergeometric test function
+  hypergeom_test <- function(df, cond1, cond2) {
+    N <- nrow(df)  # Total population size (patients)
+    K <- sum(df[[cond1]])  # Total patients with condition1
+    n <- sum(df[[cond2]])  # Total patients with condition2
+    k <- compute_overlap(df) %>% filter(Condition1 == cond1 & Condition2 == cond2) %>% pull(Observed_Count)
+
+    # Compute p-value using hypergeometric test
+    hyper_p <- phyper(k - 1, K, N - K, n, lower.tail = FALSE)  # One-tailed test
+    return(hyper_p)
+  }
+
+  # Compute permutation, binomial, and hypergeometric p-values
+  results <- map_dfr(seq_along(condition_pairs), function(i) {
+    pair <- condition_pairs[[i]]
+    observed <- observed_results$Observed_Count[i]
+    perm_distribution <- perm_results[i, ]
+    
+    data.frame(
+      Condition1 = pair[1],
+      Condition2 = pair[2],
+      Observed_Count = observed,
+      P_Permutation = mean(perm_distribution >= observed),
+      P_Binomial = binom_test(binary_matrix, pair[1], pair[2]),
+      P_Hypergeometric = hypergeom_test(binary_matrix, pair[1], pair[2]),
+      Null_Distribution = I(list(perm_distribution))  # Store full distribution
+    )
+  })
+
+  # Apply Benjamini-Hochberg correction
+  results <- results %>%
+    mutate(Adjusted_P_Permutation = p.adjust(P_Permutation, method = "BH"),
+           Adjusted_P_Binomial = p.adjust(P_Binomial, method = "BH"),
+           Adjusted_P_Hypergeometric = p.adjust(P_Hypergeometric, method = "BH"))
+  
+  return(results)
+}
+```
+
+
+Apply this function to SCAR first
+
+```{r}
+# Define SCAR conditions
+scar_conditions <- c("SJSTEN", "DRESS", "AGEP", "GBFDE")
+
+# Extract SCAR-only binary matrix
+scar_binary_matrix <- binary_matrix[, c("compositeid", scar_conditions), with = FALSE]
+
+# Remove non-SCAR cases (all-zero rows)
+scar_binary_matrix <- scar_binary_matrix[rowSums(scar_binary_matrix[, ..scar_conditions]) > 0]
+
+# Perform permutation + binomial + hypergeometric tests
+scar_test_results <- full_table_perm_binom_hypergeom_test(scar_binary_matrix, n_perm = 1000)
+
+# Display results
+print(scar_test_results)
+```
+
+Next do this for ADR
+
+```{r}
+# Perform permutation test on SCAR matrix with progress bar
+adr_perm_results <- full_table_perm_binom_hypergeom_test(binary_matrix, n_perm = 1000)
+
+# Display results
+print(adr_perm_results)
+```
+Now do it for a version of the entire FAERS dataset
+
+```{r}
+# Define total FAERS population size
+total_faers_size <- 17201564
+
+# Get the current number of patients in binary_matrix
+current_size <- nrow(binary_matrix)
+
+# Calculate how many non-SCAR cases we need to add
+num_dummy_cases <- total_faers_size - current_size
+
+# Generate dummy patient IDs
+dummy_ids <- paste0("DUMMY_", seq_len(num_dummy_cases))
+
+# Create a data.table of dummy rows (all zeros for SCAR)
+dummy_matrix <- data.table(
+  compositeid = dummy_ids
+)
+
+# Fill all SCAR-related columns with 0
+for (condition in setdiff(names(binary_matrix), "compositeid")) {
+  dummy_matrix[, (condition) := 0]
+}
+
+# Combine original binary matrix with dummy cases
+full_faers_matrix <- rbind(binary_matrix, dummy_matrix)
+
+# Verify the final row count
+stopifnot(nrow(full_faers_matrix) == total_faers_size)
+
+# Print message confirming completion
+message("Binary matrix successfully expanded to full FAERS dataset size: ", total_faers_size)
+```
+
+
+Apply the function to this data
+
+```{r}
+# Perform full-table permutation test on full FAERS dataset
+faers_full_perm_results <- full_table_perm_binom_hypergeom_test(full_faers_matrix, n_perm = 1000)
+
+# Display results
+print(faers_full_perm_results)
+```
+
+
+
+##PLOTS FOR EXPORT
+
+For this section, we will rearrange and make the plots into figures.
+
+###Table S1 - Pharmacovigilance Hits
+
+We will subset out the table of drugs meeting the following criteria: 
+
+- 3 or more cases 
+- PRR at least 2 
+- chi-squared of at least 4.
+
+```{r}
+# Define a function to subset contingency tables
+filter_signals <- function(contingency_table, 
+                           a_cutoff = 3,         # Default: At least 3 cases
+                           PRR_cutoff = 2,      # Default: PRR at least 2
+                           chisq_cutoff = 4) {  # Default: Chi-squared at least 4
+  
+  # Subset based on signal detection criteria
+  filtered_table <- contingency_table[
+    a >= a_cutoff &                # Customizable case threshold
+    PRR >= PRR_cutoff &            # Customizable PRR threshold
+    chi_squared_yates >= chisq_cutoff  # Customizable Chi-squared threshold
+  ]
+  
+  # Remove extra columns
+  filtered_table$drug <- NULL
+  filtered_table$exposed_patients <- NULL
+  filtered_table$outcome_patients <- NULL
+  filtered_table$outcome_label <- NULL
+  
+  return(filtered_table)
+}
+```
+
+Then subset and include the tables
+
+```{r}
+# Create tables from each SCAR
+scar_signals <- filter_signals(contingency_scar)
+sjsten_signals <- filter_signals(contingency_sjsten)
+dress_signals <- filter_signals(contingency_dress)
+agep_signals <- filter_signals(contingency_agep)
+gbfde_signals <- filter_signals(contingency_gbfde)
+
+# Create tables for overlap conditions
+sjsten_dress_signals <- filter_signals(contingency_SJSTEN_DRESS_Overlap)
+sjsten_agep_signals <- filter_signals(contingency_SJSTEN_AGEP_Overlap)
+dress_agep_signals <- filter_signals(contingency_DRESS_AGEP_Overlap)
+```
+
+Write these to an excel sheet.
+
+```{r}
+# Load the required package
+library(writexl)
+
+# Create a list of data tables with valid sheet names
+signal_sheets <- list(
+  "Total_SCAR" = scar_signals,
+  "SJS-TEN" = sjsten_signals,
+  "DRESS" = dress_signals,
+  "AGEP" = agep_signals,
+  "GBFDE" = gbfde_signals,
+  "SJS-TEN_DRESS" = sjsten_dress_signals,  # Replace / with _
+  "SJS-TEN_AGEP" = sjsten_agep_signals,    # Replace / with _
+  "DRESS_AGEP" = dress_agep_signals       # Replace / with _
+)
+
+# Write the Excel file
+write_xlsx(signal_sheets, path = "signals_by_scar.xlsx")
+```
+
+###Figure 4
+
+First, we have a new visualization of the SCAR that shows both number of patients and IC025.
+
+```{r}
+# Shared Y-axis scale for consistency
+y_scale <- scale_y_continuous(limits = c(-2.5, 13))  # Fixed Y-axis (-2.5 to 10)
+
+# Function to create SCAR plots with error handling
+plot_scar_IC <- function(data, scar_name, scar_color, num_drugs = 25, labeljust = 1.1) {
+  # Error handler: Check available rows
+  if (nrow(data) == 0) {
+    stop(paste("No data available for", scar_name))  # Stop execution with error message
+  }
+  
+  # Dynamically handle fewer than num_drugs rows
+  num_drugs <- min(nrow(data), num_drugs)  # Use all rows if fewer than 25 are available
+  
+  ggplot(data[order(-a)][1:num_drugs, ],  # Top N drugs based on available rows
+         aes(x = reorder(drug_name, -a), y = IC)) +  # Order by patient count
+    
+    # **1. Confidence Interval Bars (Lollipop Stems)**
+    geom_segment(aes(xend = drug_name, y = IC025, yend = IC975), 
+                 color = scar_color, size = 1.25) +  
+    
+    # **2. Point for IC (Head of the Lollipop)**
+    geom_point(color = scar_color, size = 2.5) +
+    
+    # **3. Labels for Patient Counts (Above Upper CI)**
+    geom_text(aes(label = a, y = IC975 + labeljust),  # Offset above CI
+              color = "black", size = 4, angle = 90) +
+    
+    # **4. Horizontal Line at y = 0 and y = 3**
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgrey") +
+    
+    geom_hline(yintercept = 3, linetype = "dashed", color = "red") +
+
+    
+    # Apply scales and formatting
+    y_scale +
+    theme_bw() +
+    labs(title = scar_name, x = "") +  # Remove individual y-axis label
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 14),
+      axis.title.y = element_blank(),  # Remove individual y-axis labels
+      axis.text.y = element_text(size = 12)
+    )
+}
+
+pSJS_TEN <- plot_scar_IC(contingency_sjsten, "SJS-TEN", scar_colors["SJS-TEN"], num_drugs = 25, labeljust = 1.8)
+pDRESS <- plot_scar_IC(contingency_dress, "DRESS", scar_colors["DRESS"], num_drugs = 25, labeljust = 1.8)
+pAGEP <- plot_scar_IC(contingency_agep, "AGEP", scar_colors["AGEP"], num_drugs = 25)
+pGBFDE <- plot_scar_IC(contingency_gbfde, "GBFDE", scar_colors["GBFDE"])
+
+# Force consistent axis dimensions
+gSJS_TEN <- ggplotGrob(pSJS_TEN)
+gDRESS <- ggplotGrob(pDRESS)
+gAGEP <- ggplotGrob(pAGEP)
+gGBFDE <- ggplotGrob(pGBFDE)
+
+# Ensure all plots share the same width and height
+max_width <- unit.pmax(gSJS_TEN$widths, gDRESS$widths, gAGEP$widths, gGBFDE$widths)
+max_height <- unit.pmax(gSJS_TEN$heights, gDRESS$heights, gAGEP$heights, gGBFDE$heights)
+
+# Apply uniform dimensions to all plots
+gSJS_TEN$widths <- max_width
+gDRESS$widths <- max_width
+gAGEP$widths <- max_width
+gGBFDE$widths <- max_width
+
+gSJS_TEN$heights <- max_height
+gDRESS$heights <- max_height
+gAGEP$heights <- max_height
+gGBFDE$heights <- max_height
+
+# Combine the plots in a 2x2 grid with shared Y-axis label
+pFigure3.alt <- grid.arrange(
+  gSJS_TEN, gDRESS, gAGEP, gGBFDE,  # Plots
+  ncol = 2, nrow = 2,  # 2x2 grid
+  
+  # Shared Y-axis label
+  left = textGrob("Information Component (with 95% CI)", rot = 90, gp = gpar(fontsize = 14, fontface = "bold"), hjust = 0.325)
+)
+plot(pFigure3.alt)
+
+```
+###Figure S4 - negatives
+
+Some drugs have a negative IC! Let's investigate
+
+```{r}
+# Shared Y-axis scale for consistency
+y_scale <- scale_y_continuous(limits = c(-7.5, 2))  # Fixed Y-axis (-7.5 to 2)
+
+# Function to plot top negative IC drugs
+plot_negative_IC <- function(data, scar_name, scar_color, num_drugs = 25, labeljust = 1.1) {
+  # Error handler: Check available rows
+  if (nrow(data) == 0) {
+    stop(paste("No data available for", scar_name))  # Stop execution with error message
+  }
+  
+  # Filter for drugs with negative IC values
+  negative_ic_data <- data[IC < 0]
+  
+  # Check if there are any negative IC drugs
+  if (nrow(negative_ic_data) == 0) {
+    stop(paste("No drugs with negative IC for", scar_name))  
+  }
+  
+  # If fewer than num_drugs available, plot all
+  num_drugs <- min(nrow(negative_ic_data), num_drugs)
+  
+  # Select top drugs with the most negative IC values
+  top_negative_ic_drugs <- negative_ic_data[order(IC)][1:num_drugs, ]  # Order by IC ascending (most negative first)
+  
+  ggplot(top_negative_ic_drugs,  
+         aes(x = reorder(drug_name, IC), y = IC)) +  # Order by IC (most negative left)
+    
+    # **1. Confidence Interval Bars (Lollipop Stems)**
+    geom_segment(aes(xend = drug_name, y = IC025, yend = IC975), 
+                 color = scar_color, size = 1.25) +  
+    
+    # **2. Point for IC (Head of the Lollipop)**
+    geom_point(color = scar_color, size = 2.5) +
+    
+    # **3. Labels for Patient Counts (Above Upper CI)**
+    geom_text(aes(label = a, y = IC975 + labeljust),  # Offset above CI
+              color = "black", size = 4, angle = 90) +
+    
+    # **4. Horizontal Line at y = 0 and y = 3**
+    geom_hline(yintercept = 0, linetype = "dashed", color = "darkgrey") +
+    geom_hline(yintercept = 3, linetype = "dashed", color = "red") +
+    
+    # Apply scales and formatting
+    y_scale +
+    theme_bw() +
+    labs(title = paste(scar_name, "- Most Negative IC"), x = "") +  # Updated title
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 11),
+      axis.title.y = element_blank(),  # Remove individual y-axis labels
+      axis.text.y = element_text(size = 12)
+    )
+}
+
+
+pSJS_TENneg <- plot_negative_IC(contingency_sjsten, "SJS-TEN", scar_colors["SJS-TEN"], num_drugs = 20)
+pDRESSneg <- plot_negative_IC(contingency_dress, "DRESS", scar_colors["DRESS"], num_drugs = 20)
+pAGEPneg <- plot_negative_IC(contingency_agep, "AGEP", scar_colors["AGEP"], num_drugs = 20)
+
+# Force consistent axis dimensions
+gSJS_TENneg <- ggplotGrob(pSJS_TENneg)
+gDRESSneg <- ggplotGrob(pDRESSneg)
+gAGEPneg <- ggplotGrob(pAGEPneg)
+
+# Ensure all plots share the same width and height
+max_width <- unit.pmax(gSJS_TENneg$widths, gDRESSneg$widths, gAGEPneg$widths)
+max_height <- unit.pmax(gSJS_TENneg$heights, gDRESSneg$heights, gAGEPneg$heights)
+
+# Apply uniform dimensions to all plots
+gSJS_TENneg$widths <- max_width
+gDRESSneg$widths <- max_width
+gAGEPneg$widths <- max_width
+
+gSJS_TENneg$heights <- max_height
+gDRESSneg$heights <- max_height
+gAGEPneg$heights <- max_height
+
+# Combine the plots in a 3x1 grid with shared Y-axis label
+pFigureSNeg.alt <- grid.arrange(
+  gSJS_TENneg, gDRESSneg, gAGEPneg, # Plots
+  ncol = 3, nrow = 1,  # 3x1 grid
+  
+  # Shared Y-axis label
+  left = textGrob("Information Component (with 95% CI)", rot = 90, gp = gpar(fontsize = 12, fontface = "bold"), hjust = 0.325)
+)
+plot(pFigureSNeg.alt)
+
+
+```
+
+
+###Figure 5 - Overlaps
+
+Figure 5 will be looking at overlaps between patients:
+
+```{r}
+# Shared Y-axis scale for consistency
+y_scale <- scale_y_continuous(limits = c(-2.5, 10))  # Fixed Y-axis (-2.5 to 10)
+
+pSJSTEN_AGEP_overlap <- plot_scar_IC(contingency_SJSTEN_AGEP_Overlap, "SJS-TEN/AGEP Co-reporting", "honeydew3", num_drugs = 20)
+pDRESS_AGEP_overlap <- plot_scar_IC(contingency_DRESS_AGEP_Overlap, "DRESS/AGEP Co-reporting", "turquoise2", num_drugs = 20)
+pSJSTEN_DRESS_overlap <- plot_scar_IC(contingency_SJSTEN_DRESS_Overlap, "SJS-TEN/DRESS Co-reporting", "salmon2", num_drugs = 20)
+
+# Force consistent axis dimensions
+gSJSTEN_AGEP_overlap <- ggplotGrob(pSJSTEN_AGEP_overlap)
+gDRESS_AGEP_overlap <- ggplotGrob(pDRESS_AGEP_overlap)
+gSJSTEN_DRESS_overlap <- ggplotGrob(pSJSTEN_DRESS_overlap)
+
+# Ensure all plots share the same width and height
+max_width <- unit.pmax(gSJSTEN_AGEP_overlap$widths, gDRESS_AGEP_overlap$widths, gSJSTEN_DRESS_overlap$widths)
+max_height <- unit.pmax(gSJSTEN_AGEP_overlap$heights, gDRESS_AGEP_overlap$heights, gSJSTEN_DRESS_overlap$heights)
+
+# Apply uniform dimensions to all plots
+gSJSTEN_AGEP_overlap$widths <- max_width
+gDRESS_AGEP_overlap$widths <- max_width
+gSJSTEN_DRESS_overlap$widths <- max_width
+
+gSJSTEN_AGEP_overlap$heights <- max_height
+gDRESS_AGEP_overlap$heights <- max_height
+gDRESS_AGEP_overlap$heights <- max_height
+
+# Combine the plots in a 2x2 grid with shared Y-axis label
+pFigure4.alt <- grid.arrange(
+  gSJSTEN_DRESS_overlap, gDRESS_AGEP_overlap, gSJSTEN_AGEP_overlap, pOverlap,  # Plots
+  ncol = 2, nrow = 2, 
+  # Shared Y-axis label
+  left = textGrob("Information Component (with 95% CI)", rot = 90, gp = gpar(fontsize = 14, fontface = "bold"), hjust = 0.325))# 2x2 grid
+
+plot(pFigure4.alt)
+```
+
+### Figure S3
+
+```{r}
+pS3 <- plot_scar_IC(contingency_scar, "SCAR", "#FF7F00", num_drugs = 100, labeljust = 0.5) +
+  ylim(c(-5, 8)) + 
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, size = 8),
+    axis.title.y = element_text(size = 12, face = "bold", angle = 90)  # Rotate Y-axis label
+  ) + 
+  labs(y = "Information Component (with 95% CI)")
+
+plot(pS3)
+```
+
+## SCAR DEMOGRAPHICS
+
+### Figure 2 - Demographic Table
+
+Figure 2 of this paper is the demographic table, where we show number of patients, age, sex, and country of origin for each type.
+
+```{r}
+# Function to summarize demographics for a given SCAR
+summarize_scar <- function(demographics, patient_ids) {
+  # Subset data for SCAR
+  scar_data <- demographics %>%
+    filter(compositeid %in% patient_ids)  # Filter by patient IDs
+  
+  # Summarize key metrics
+  summary <- scar_data %>%
+    summarise(
+      N = n(),  # Total number of patients
+      Age_Median = median(age_yr, na.rm = TRUE),
+      Age_IQR = IQR(age_yr, na.rm = TRUE),
+      Male_Percent = mean(sex == "M", na.rm = TRUE) * 100,
+      Top_Countries = paste0(names(sort(table(country), decreasing = TRUE)[1:3]), collapse = ", ")
+    )
+  
+  return(summary)
+}
+
+# SCAR subsets
+SCAR_summary <- summarize_scar(demographics, compositeid_SCAR$compositeid)
+SJS_TEN_summary <- summarize_scar(demographics, compositeid_SJSTEN$compositeid)
+DRESS_summary <- summarize_scar(demographics, compositeid_DRESS$compositeid)
+AGEP_summary <- summarize_scar(demographics, compositeid_AGEP$compositeid)
+GBFDE_summary <- summarize_scar(demographics, compositeid_GBFDE$compositeid)
+
+# Combine all summaries into one table
+scar_summary <- bind_rows(
+  SCAR_summary %>% mutate(SCAR = "All SCAR"),
+  SJS_TEN_summary %>% mutate(SCAR = "SJS-TEN"),
+  DRESS_summary %>% mutate(SCAR = "DRESS"),
+  AGEP_summary %>% mutate(SCAR = "AGEP"),
+  GBFDE_summary %>% mutate(SCAR = "GBFDE")
+)
+
+# View summary table
+print(scar_summary)
+```
+
+Now to create a four-panel figure to summarize SCAR demographics. First we pare down the data:
+
+```{r}
+# First we need to format the data
+demographics <- as.data.table(demographics)
+
+# Subset for SCAR in general
+DEMO_SCAR_all <- demographics[compositeid %in% compositeid_SCAR$compositeid]
+DEMO_SCAR_all[, SCAR := "Total SCAR"]
+
+# Subset for specific SCAR types
+DEMO_SCAR_sjs_ten <- demographics[compositeid %in% compositeid_SJSTEN$compositeid]
+DEMO_SCAR_sjs_ten[, SCAR := "SJS-TEN"]
+
+DEMO_SCAR_dress <- demographics[compositeid %in% compositeid_DRESS$compositeid]
+DEMO_SCAR_dress[, SCAR := "DRESS"]
+
+DEMO_SCAR_agep <- demographics[compositeid %in% compositeid_AGEP$compositeid]
+DEMO_SCAR_agep[, SCAR := "AGEP"]
+
+DEMO_SCAR_gbfde <- demographics[compositeid %in% compositeid_GBFDE$compositeid]
+DEMO_SCAR_gbfde[, SCAR := "GBFDE"]
+
+# Combine all SCAR data into one dataset
+DEMO_SCAR_combined <- rbind(DEMO_SCAR_all, DEMO_SCAR_sjs_ten, DEMO_SCAR_dress, DEMO_SCAR_agep, DEMO_SCAR_gbfde)
+
+```
+
+Then use it to make the plot (Figure 1). One plot will be number of cases over time:
+
+```{r}
+# Extract year from positions 5 and 6
+DEMO_SCAR_combined[, year := as.integer(substr(filename, 5, 6)) + 2000]
+
+# Count raw cases by SCAR type and year
+case_counts <- DEMO_SCAR_combined[, .N, by = .(SCAR, year)][order(SCAR, year)]
+
+# Plot raw number of cases by year
+p1 <- ggplot(case_counts, aes(x = year, y = N, color = SCAR, group = SCAR)) +
+  geom_line(size = 1, alpha = 0.8) +        # Line plot with transparency
+  geom_point(size = 2, alpha = 0.8) +      # Points with transparency
+  labs(title = "SCAR Cases By Year",
+       x = "Year",
+       y = "Number of Cases") +
+  theme_bw() +
+  scale_color_manual(values = scar_colors) +  # Use consistent SCAR colors
+  theme(legend.title = element_blank())       # Remove legend title
+
+# Display the updated plot
+plot(p1)
+
+```
+
+Next, plot age distribution by SCAR type
+
+```{r}
+## Plotting age distribution in violin plots
+# Calculate IQR and detect outliers
+Q1 <- quantile(DEMO_SCAR_combined$age_yr, 0.25, na.rm = TRUE)
+Q3 <- quantile(DEMO_SCAR_combined$age_yr, 0.75, na.rm = TRUE)
+IQR <- Q3 - Q1
+
+# Define outlier bounds
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Separate filtered data (within bounds) and outliers
+filtered_data <- DEMO_SCAR_combined[age_yr >= lower_bound & age_yr <= upper_bound]
+outliers <- DEMO_SCAR_combined[age_yr < lower_bound | age_yr > upper_bound]
+
+# Violin + Boxplot for filtered data, add outliers as dots
+p2 <- ggplot(filtered_data, aes(x = SCAR, y = age_yr, fill = SCAR)) +
+  geom_violin(alpha = 0.8) +  # Violin plot with transparency
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.8, outlier.shape = NA) +  # Boxplot with transparency
+  geom_jitter(data = outliers, aes(x = SCAR, y = age_yr),  # Outliers remain opaque
+              color = "red", size = 2, alpha = 1, width = 0.15) +
+  
+  # Add pairwise comparisons with significance stars
+  stat_compare_means(
+    method = "wilcox.test",  # Wilcoxon test for non-parametric data
+    comparisons = list(
+      c("AGEP", "SJS-TEN"),  # AGEP vs SJS-TEN
+      c("AGEP", "DRESS"),    # AGEP vs DRESS
+      c("AGEP", "GBFDE")     # AGEP vs GBFDE
+    ),
+    label = "p.signif",  # Display only stars (***, **, *)
+    hide.ns = TRUE,      # Hide non-significant comparisons entirely
+    label.y = c(105, 115, 125)  # Adjust vertical positions for labels
+  ) +
+  
+  # Axis labels, title, and theme
+  labs(title = "Age Distribution by SCAR Type",
+       x = "SCAR Type",
+       y = "Age (years)") +
+  theme_bw() +
+  scale_fill_manual(values = scar_colors) +  # Use consistent SCAR colors
+  theme(legend.position = "none") +  # Remove legend
+  coord_cartesian(ylim = c(0, 135))  # Adjust y-axis limits to 130
+
+# Display the updated plot
+plot(p2)
+
+```
+
+Next plot is sex:
+
+```{r}
+# Categorize sex into M, F, and Other
+DEMO_SCAR_combined[, sex_cat := ifelse(sex %in% c("M", "F"), sex, "Other")]
+
+# Calculate counts and proportions for labels
+sex_counts <- DEMO_SCAR_combined[, .N, by = .(SCAR, sex_cat)]
+sex_counts[, prop := N / sum(N), by = SCAR]  # Proportion for positioning
+
+# Plot sex distribution by SCAR type with counts and borders
+p3 <- ggplot(DEMO_SCAR_combined, aes(x = SCAR, fill = sex_cat)) +
+  geom_bar(position = "fill", color = "black") +  # Added black border
+  geom_text(data = sex_counts, 
+            aes(x = SCAR, y = prop, label = N),  # Removed fill aesthetic
+            position = position_stack(vjust = 0.5),  # Center labels
+            size = 3) +
+  labs(title = "Sex Distribution by SCAR Type",
+       x = "SCAR Type",
+       y = "Proportion") +
+  scale_fill_manual(values = c("M" = "skyblue", "F" = "pink", "Other" = "green")) +  # Custom colors
+  theme_bw() +
+  theme(legend.title = element_blank())  # Remove legend title
+
+plot(p3)
+
+```
+
+Final plot is country:
+
+```{r}
+# Replace missing countries with "Not specified"
+DEMO_SCAR_combined[, country := ifelse(is.na(country), "COUNTRY NOT SPECIFIED", country)]
+
+# Filter out the SCAR total and keep only AGEP, DRESS, SJS-TEN, GBFDE
+filtered_data <- DEMO_SCAR_combined[SCAR %in% c("AGEP", "DRESS", "SJS-TEN", "GBFDE")]
+filtered_data <- filtered_data[!(country == "COUNTRY NOT SPECIFIED")]
+
+# Count cases by country and SCAR type
+country_counts <- filtered_data[, .N, by = .(country, SCAR)]
+
+# Calculate **Total_SCAR** cases directly from the dataset, excluding "COUNTRY NOT SPECIFIED"
+total_scar <- DEMO_SCAR_combined[
+  SCAR == "Total SCAR" & country != "COUNTRY NOT SPECIFIED",  # Exclude unspecified countries
+  .(Total = .N), 
+  by = country
+]
+
+# Select top 10 countries by **Total_SCAR**
+top_countries <- total_scar[order(-Total)][1:10]
+
+# Filter data for only the top 10 countries
+filtered_countries <- country_counts[country %in% top_countries$country]
+
+# Merge filtered_countries with **Total_SCAR** values for labels
+filtered_countries <- merge(filtered_countries, top_countries, by = "country")
+
+# **Stacked bar chart with Total_SCAR labels**
+p4 <- ggplot(filtered_countries, aes(x = reorder(country, Total), y = N, fill = SCAR)) +
+  geom_bar(stat = "identity", color = "black", alpha = 0.8) +  # Bars with transparency
+  
+  # Add **Total_SCAR** labels using total_scar values
+  geom_text(data = total_scar[total_scar$country %in% top_countries$country],  
+            aes(x = country, y = Total, label = Total),  
+            inherit.aes = FALSE,  
+            hjust = -0.8, size = 3) +  
+  
+  coord_flip() +  
+  scale_fill_manual(values = scar_colors) +  # Consistent SCAR colors
+  labs(title = "Top 10 Countries by SCAR Cases",
+       x = "Country",
+       y = "Number of Cases") +
+  ylim(0, 20000) +  # Increase Y-axis limit
+  theme_bw() +
+  theme(legend.title = element_blank())  # Remove legend title
+
+# Display the updated plot
+plot(p4)
+```
+
+Create figure 1 as a final plot
+
+```{r}
+# Combine all four plots into a 2x2 layout
+combined_plot_Fig1 <- (p1 | p2) / (p3 | p4) +  # Use patchwork operators to define the grid
+  plot_annotation(
+    title = "",
+    theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))  # Title formatting
+  )
+
+# Display the combined plot
+print(combined_plot_Fig1)
+```
+
+###Supplemental Figure 1: Age-Sex distribuiton
+
+Looking at age vs sex may show some interesting ideas:
+
+```{r}
+# Filter and clean data
+age_sex_data_SCAR <- DEMO_SCAR_all %>%
+  filter(!is.na(age_yr), !is.na(sex), sex %in% c("M", "F"))  # Remove missing and ambiguous data
+age_sex_data_SJSTEN <- DEMO_SCAR_sjs_ten %>%
+  filter(!is.na(age_yr), !is.na(sex), sex %in% c("M", "F"))  # Remove missing and ambiguous data
+age_sex_data_DRESS <- DEMO_SCAR_dress %>%
+  filter(!is.na(age_yr), !is.na(sex), sex %in% c("M", "F"))  # Remove missing and ambiguous data
+age_sex_data_AGEP <- DEMO_SCAR_agep %>%
+  filter(!is.na(age_yr), !is.na(sex), sex %in% c("M", "F"))  # Remove missing and ambiguous data
+age_sex_data_GBFDE <- DEMO_SCAR_gbfde %>%
+  filter(!is.na(age_yr), !is.na(sex), sex %in% c("M", "F"))  # Remove missing and ambiguous data
+```
+
+Now make the plots!
+
+```{r}
+# Create the density plot scaled by patient counts
+pS1.scar <- ggplot(age_sex_data_SCAR) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_SCAR, sex == "M")),  # Use nrow() to count males
+      fill = "Male"
+    ),
+    data = subset(age_sex_data_SCAR, sex == "M"),
+    alpha = 0.5
+  ) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_SCAR, sex == "F")),  # Use nrow() to count females
+      fill = "Female"
+    ),
+    data = subset(age_sex_data_SCAR, sex == "F"),
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("Male" = "skyblue", "Female" = "pink")) +
+  labs(
+    title = "All SCAR",
+    x = "Age (Years)",
+    y = "Number of Patients",
+    fill = "Sex"
+  ) +
+ 
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "nowhere"
+  ) + xlim(c(0,105))
+
+# Display the plot
+plot(pS1.scar)
+```
+
+```{r}
+# Create the density plot scaled by patient counts
+pS1.sjsten <- ggplot(age_sex_data_SJSTEN) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_SJSTEN, sex == "M")),  # Use nrow() to count males
+      fill = "Male"
+    ),
+    data = subset(age_sex_data_SJSTEN, sex == "M"),
+    alpha = 0.5
+  ) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_SJSTEN, sex == "F")),  # Use nrow() to count females
+      fill = "Female"
+    ),
+    data = subset(age_sex_data_SJSTEN, sex == "F"),
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("Male" = "skyblue", "Female" = "pink")) +
+  labs(
+    title = "SJS-TEN",
+    x = "",
+    y = "",
+    fill = "Sex"
+  ) +
+ 
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 10)
+  ) + xlim(c(0,105))
+
+plot(pS1.sjsten)
+```
+
+```{r}
+# Create the density plot scaled by patient counts
+pS1.dress <- ggplot(age_sex_data_DRESS) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_DRESS, sex == "M")),  # Use nrow() to count males
+      fill = "Male"
+    ),
+    data = subset(age_sex_data_DRESS, sex == "M"),
+    alpha = 0.5
+  ) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_DRESS, sex == "F")),  # Use nrow() to count females
+      fill = "Female"
+    ),
+    data = subset(age_sex_data_DRESS, sex == "F"),
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("Male" = "skyblue", "Female" = "pink")) +
+  labs(
+    title = "DRESS",
+    x = "",
+    y = "",
+    fill = "Sex"
+  ) +
+ 
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 10)
+  ) + xlim(c(0,105))
+
+
+plot(pS1.dress)
+```
+
+```{r}
+# Create the density plot scaled by patient counts
+pS1.agep <- ggplot(age_sex_data_AGEP) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_AGEP, sex == "M")),  # Use nrow() to count males
+      fill = "Male"
+    ),
+    data = subset(age_sex_data_AGEP, sex == "M"),
+    alpha = 0.5
+  ) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_AGEP, sex == "F")),  # Use nrow() to count females
+      fill = "Female"
+    ),
+    data = subset(age_sex_data_AGEP, sex == "F"),
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("Male" = "skyblue", "Female" = "pink")) +
+  labs(
+    title = "AGEP",
+    x = "",
+    y = "",
+    fill = "Sex"
+  ) +
+ 
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 10)
+  ) + xlim(c(0,105))
+
+plot(pS1.agep)
+```
+
+```{r}
+# Create the density plot scaled by patient counts
+pS1.gbfde <- ggplot(age_sex_data_GBFDE) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_GBFDE, sex == "M")),  # Use nrow() to count males
+      fill = "Male"
+    ),
+    data = subset(age_sex_data_GBFDE, sex == "M"),
+    alpha = 0.5
+  ) +
+  geom_density(
+    aes(
+      x = age_yr,
+      y = ..density.. * nrow(subset(age_sex_data_GBFDE, sex == "F")),  # Use nrow() to count females
+      fill = "Female"
+    ),
+    data = subset(age_sex_data_GBFDE, sex == "F"),
+    alpha = 0.5
+  ) +
+  scale_fill_manual(values = c("Male" = "skyblue", "Female" = "pink")) +
+  labs(
+    title = "GBFDE",
+    x = "Age (Years)",
+    y = "",
+    fill = "Sex"
+  ) +
+ 
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 10)
+  ) + xlim(c(0,105))
+
+plot(pS1.gbfde)
+```
+
+Combine these into one plot:
+
+```{r}
+# Combine the 4 smaller plots into one structure with shared x-axis
+right_combined <- wrap_plots(
+  pS1.sjsten, 
+  pS1.dress, 
+  pS1.agep, 
+  pS1.gbfde,
+  ncol = 1,         # Stack vertically
+  guides = "collect" # Collect shared legends if applicable
+) &
+  theme(axis.title.x = element_blank())  # Remove individual x-axis labels
+
+# Add a shared x-axis label
+right_combined <- right_combined + plot_annotation(tag_levels = 'A') +
+  plot_layout(guides = "collect") &
+  theme(plot.tag.position = "t", axis.title.x = element_text(size = 12))
+
+# Combine left and right plots
+combined_plot_FigS1 <- (pS1.scar | right_combined) +
+  plot_layout(widths = c(2, 1)) +  # Uneven widths
+  plot_annotation(
+    title = "",
+    theme = theme(plot.title = element_text(size = 16, face = "bold"))
+  )
+
+# Save or display the plot
+print(combined_plot_FigS1)
+```
+## GEOGRAPHY
+
+We have geographic data. Here's what we can do with it: 
+
+1. Normalize counts of each scar from each country by the number of total reports to FAERS from the country. 
+2. Plot it separately on five cloropleths to see how it looks!
+
+```{r}
+# Replace missing countries with "Not specified"
+total_country_filtered <- demographics
+total_country_filtered[, country := ifelse(is.na(country), "COUNTRY NOT SPECIFIED", country)]
+total_country_filtered <- total_country_filtered[!(country == "COUNTRY NOT SPECIFIED")]
+
+# Count total number of reports by country
+country_counts_total <- total_country_filtered[, .N, by = .(country)]
+
+# Count total number of reports per SCAR
+# Filter out the SCAR total and keep only AGEP, DRESS, SJS-TEN, GBFDE
+filtered_data <- DEMO_SCAR_combined[!(country == "COUNTRY NOT SPECIFIED")]
+
+# Count cases by country and SCAR type
+country_counts <- filtered_data[, .N, by = .(country, SCAR)]
+rm(filtered_data)
+
+# Merge the totals into the country counts
+colnames(country_counts_total)[2] <- "TOTAL"
+country_frequency <- merge(country_counts, country_counts_total, by = "country", all.x = TRUE)
+
+# Calculate cases per 1000 total reports
+country_frequency[, cases_per_1000 := (N / TOTAL) * 1000]
+```
+
+Import the world map and fix some of the data:
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+#Fix a few country codes manually
+
+world$iso_a2[161] <- "FR" #France
+world$iso_a2[131] <- "XK" #Kosovo
+world$iso_a2[89] <- "NO" #Norway
+world$iso_a2[46] <- "TW" #Taiwan
+
+# Extract population data
+pop_data <- world %>% select(iso_a2, pop_est)
+
+# Find normalized rates by 
+country_frequency <- country_frequency %>%
+  left_join(pop_data, by = c("country" = "iso_a2")) %>%
+  mutate(
+    per_1000_reports = (N / TOTAL) * 1000,                     # Normalize by reports
+    per_million_pop = (N / pop_est) * 1e6,                     # Normalize by population
+    normalized_rate = (per_1000_reports / pop_est) * 1e6       # Combined normalization
+  )
+```
+
+###Figure S2
+
+As a first approximation, lets try just plotting number of reports:
+
+```{r}
+plot_normalized_choropleth <- function(data, scar_type, world_map, scar_colors, transform = "log") {
+  # Filter data for the selected SCAR type
+  scar_data <- data %>% filter(SCAR == scar_type)
+  
+  # Merge SCAR data with world map
+  world_joined <- world_map %>%
+    left_join(scar_data, by = c("iso_a2" = "country")) %>%
+    mutate(output = N)  # Default to raw number of reports
+  
+  # Define color scale dynamically
+  scar_color <- scar_colors[scar_type]
+  
+  # Apply transformation
+  if (transform == "log") {
+    world_joined <- world_joined %>%
+      mutate(output = log10(N + 1))  # Log transform (+1 to handle zeros)
+    
+    # Log scale with manually specified breaks and labels
+    fill_scale <- scale_fill_gradientn(
+      colors = c("white", scar_color),
+      values = scales::rescale(c(0, 1, 2, 3, 4, 5)),  # Rescale log10 values (0–5)
+      breaks = c(0, 1, 2, 3, 4, 5),  # Breaks corresponding to 10^0, 10^1, etc.
+      labels = c("1", "10", "100", "1000", "10000", "100000"),  # Labels for each power of 10
+      name = "#Reports"  # Legend label
+    )
+  } else if (transform == "sqrt") {
+    world_joined <- world_joined %>%
+      mutate(output = sqrt(N))  # Square root transform
+    
+    fill_scale <- scale_fill_gradient(
+      low = "white", 
+      high = scar_color,
+      name = "√Reports"
+    )
+  } else {
+    # Linear scale
+    fill_scale <- scale_fill_gradient(
+      low = "white", 
+      high = scar_color,
+      name = "#Reports"
+    )
+  }
+  
+  # Generate the plot
+  plot <- ggplot(world_joined) +
+    geom_sf(aes(fill = output), color = "gray") +
+    fill_scale +  # Apply the dynamic gradient scale
+    labs(
+      title = scar_type
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank()
+    )
+  
+  return(plot)
+}
+
+
+# Generate maps for each SCAR type
+plot_total_scar <- plot_normalized_choropleth(country_frequency, "Total SCAR", world, scar_colors)
+plot_sjs_ten <- plot_normalized_choropleth(country_frequency, "SJS-TEN", world, scar_colors)
+plot_dress <- plot_normalized_choropleth(country_frequency, "DRESS", world, scar_colors)
+plot_agep <- plot_normalized_choropleth(country_frequency, "AGEP", world, scar_colors)
+plot_gbfde <- plot_normalized_choropleth(country_frequency, "GBFDE", world, scar_colors)
+```
+
+Let's see what the overall SCAR distribution looks like
+
+```{r}
+print(plot_total_scar)
+```
+
+We can arrange four of the plots into a figure (2x2 panelling):
+
+```{r}
+combined_plot_FigS2 <- (plot_sjs_ten | plot_dress) / (plot_agep | plot_gbfde)
+print(combined_plot_FigS2)
+```
+
+Excellent. These are exportable.
+
+##TEMPORAL TRENDS
+
+###Overall SCAR
+
+We can also analyze changes in causative agents over time. For now we'll keep the data granular by year.
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(stringr)
+
+# Filter standard_case_drug for primary suspect (PS) drugs
+causative_drugs <- standard_case_drug %>%
+  filter(role_cod == "PS") %>%
+  select(compositeid, drug_name)  # Keep only relevant columns
+
+# Extract year from demographics filename (assuming format "DEMO04Q1" -> 2004)
+demographics_year <- demographics %>%
+  mutate(report_year = as.numeric(str_sub(filename, 5, 6)) + 2000) %>%  # Extract year
+  select(compositeid, report_year)  # Keep only relevant columns
+
+# Join tables: SCAR cases with their causative drugs and report years
+scar_temporal_data <- compositeid_SCAR %>%
+  inner_join(causative_drugs, by = "compositeid") %>%
+  inner_join(demographics_year, by = "compositeid")
+
+# Preview the dataset
+head(scar_temporal_data)
+```
+
+Now we can add small molecule vs not
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Define the top 5 drugs (update with actual drug names)
+top_5_drugs <- c("allopurinol", "lamotrigine", "carbamazepine", "vancomycin", "ibuprofen")
+
+# Classify drugs into biologic vs. small molecule and mark top drugs separately
+scar_temporal_data <- scar_temporal_data %>%
+  mutate(
+    classification = case_when(
+      grepl("mab", drug_name, ignore.case = TRUE) ~ "Biologic",
+      grepl("cept$", drug_name, ignore.case = TRUE) ~ "Biologic",
+      TRUE ~ "Small Molecule"
+    ),
+    top_drug = drug_name %in% top_5_drugs  # Boolean for top drugs
+  )
+
+# Preview the updated dataset
+head(scar_temporal_data)
+```
+
+Ok this is very interesting. Let's do a stacked bar chart to visualize.
+
+```{r}
+# Bin years using Hmisc::cut2 (ensuring ~10 equal-sized bins)
+scar_temporal_data <- scar_temporal_data %>%
+  mutate(year_bin = cut2(report_year, g = 10))  # Bin into ~10 equal-sized groups
+
+# Create a new category column for visualization
+scar_temporal_data <- scar_temporal_data %>%
+  mutate(category = case_when(
+    classification == "Biologic" ~ "Biologic",
+    top_drug == TRUE ~ "Top 5 Small Molecules",
+    TRUE ~ "Other Small Molecules"
+  ))
+
+# Summarize case counts for the three categories
+summary_df <- scar_temporal_data %>%
+  group_by(year_bin, category) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Generate stacked bar chart with count labels inside the bars
+pTemporalScar <- ggplot(summary_df, aes(x = year_bin, y = count, fill = category)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.9) +  # Slight transparency for clarity
+  scale_fill_manual(values = c("Biologic" = "#A6CEE3",  # Light Blue
+                               "Other Small Molecules" = "#B2DF8A",  # Light Green
+                               "Top 5 Small Molecules" = "#FB9A99")) +  # Light Red/Pink
+  geom_text(aes(label = count), position = position_stack(vjust = 0.5), size = 3, color = "black") +  # Add report counts inside bars
+  labs(title = "SCAR Reports Over Time: Biologics vs. Small Molecules",
+       x = "Binned Years",
+       y = "Number of Reports",
+       fill = "Drug Classification") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for clarity
+```
+
+And now, we can answer the question of whether the proportion of biologics has increased over time. We'll do this using a glm and the Cochrane-Armitage test.
+
+```{r}
+# Calculate proportion of biologics per year bin
+prop_data <- scar_temporal_data %>%
+  group_by(year_bin) %>%
+  summarise(
+    biologic_count = sum(classification == "Biologic"),
+    total_count = n(),
+    proportion_biologic = biologic_count / total_count
+  )
+
+# Logistic Regression: Testing if biologic proportion increases over time
+prop_data$year_bin_numeric <- as.numeric(as.factor(prop_data$year_bin))  # Convert to numeric
+glm_model <- glm(cbind(biologic_count, total_count - biologic_count) ~ year_bin_numeric, 
+                 data = prop_data, 
+                 family = binomial)
+
+summary(glm_model)  # Check statistical significance of year_bin_numeric
+
+# Cochran-Armitage Test for Trend
+prop_test <- prop.trend.test(prop_data$biologic_count, prop_data$total_count)
+print(prop_test)
+```
+
+Then we can plot it:
+
+```{r}
+# Plot the biologic proportion over time bins
+pBiolProptime <- ggplot(prop_data, aes(x = year_bin_numeric, y = 100*proportion_biologic)) +
+  geom_line(color = "#1F77B4", size = 1) +
+  geom_point(color = "#1F77B4", size = 3) +
+  labs(title = "% of Biologic SCAR Reports Over Time",
+       x = "Binned Years",
+       y = "% of Reports Tied to Biologics") +
+  theme_minimal()
+
+print(pBiolProptime)
+```
+
+Just the be sure, test it by year too:
+
+```{r}
+# Calculate proportion of biologics per year
+prop_data_yearly <- scar_temporal_data %>%
+  group_by(report_year) %>%
+  summarise(
+    biologic_count = sum(classification == "Biologic"),  # Count biologic cases per year
+    total_count = n(),  # Total cases per year
+    proportion_biologic = biologic_count / total_count  # Compute proportion
+  )
+
+# Logistic Regression: Testing if biologic proportion increases over time
+glm_model_yearly <- glm(cbind(biologic_count, total_count - biologic_count) ~ report_year, 
+                        data = prop_data_yearly, 
+                        family = binomial)
+
+summary(glm_model_yearly)  # Check statistical significance of report_year
+
+# Cochran-Armitage Test for Trend (Uses yearly counts)
+prop_test_yearly <- prop.trend.test(prop_data_yearly$biologic_count, prop_data_yearly$total_count)
+print(prop_test_yearly)
+```
+
+Very interesting - there is strong evidence that the proportion of biologics in reports of SCAR has increased over time. Now lets check the trend of top 5 drugs over time!
+
+```{r}
+# Calculate the proportion of reports that involve a top 5 drug in each time bin
+top5_prop_data <- scar_temporal_data %>%
+  group_by(year_bin) %>%
+  summarise(
+    top5_count = sum(top_drug == TRUE),  # Number of top 5 drug reports
+    total_count = n(),  # Total SCAR reports in the bin
+    proportion_top5 = top5_count / total_count  # Compute proportion
+  )
+
+# Logistic Regression: Testing if top 5 drug proportion increases over time
+top5_prop_data$year_bin_numeric <- as.numeric(as.factor(top5_prop_data$year_bin))  # Convert to numeric
+glm_top5 <- glm(cbind(top5_count, total_count - top5_count) ~ year_bin_numeric, 
+                data = top5_prop_data, 
+                family = binomial)
+
+summary(glm_top5)  # Check statistical significance of year_bin_numeric
+
+# Cochran-Armitage Test for Trend
+top5_prop_test <- prop.trend.test(top5_prop_data$top5_count, top5_prop_data$total_count)
+print(top5_prop_test)
+```
+
+Then plot it:
+
+```{r}
+# Plot the top 5 drug proportion over time bins
+pTopProptime <- ggplot(top5_prop_data, aes(x = year_bin_numeric, y = 100*proportion_top5)) +
+  geom_line(color = "#D62728", size = 1) +  # Red line for trend
+  geom_point(color = "#D62728", size = 3) +  # Red dots for data points
+  labs(title = "% of SCAR Reports Involving Top 5 Drugs Over Time",
+       x = "Binned Years",
+       y = "% of Reports Tied to Top 5 Drugs") +
+  theme_minimal()
+```
+
+Now do it for non-top5 small molecule drugs
+
+```{r}
+# Calculate the proportion of reports that involve a non-top 5 small molecule drug in each time bin
+non_top5_prop_data <- scar_temporal_data %>%
+  filter(classification == "Small Molecule" & top_drug == FALSE) %>%  # Exclude biologics & top 5 drugs
+  group_by(year_bin) %>%
+  summarise(
+    non_top5_count = n(),  # Number of non-top 5 small molecule reports
+    total_count = n_distinct(scar_temporal_data$compositeid[scar_temporal_data$year_bin == first(year_bin)]),  # Correct total reports in bin
+    proportion_non_top5 = non_top5_count / total_count  # Compute proportion
+  )
+
+# Logistic Regression: Testing if non-top 5 small molecule proportion changes over time
+non_top5_prop_data$year_bin_numeric <- as.numeric(as.factor(non_top5_prop_data$year_bin))  # Convert to numeric
+glm_non_top5 <- glm(cbind(non_top5_count, total_count - non_top5_count) ~ year_bin_numeric, 
+                     data = non_top5_prop_data, 
+                     family = binomial)
+
+summary(glm_non_top5)  # Check statistical significance of year_bin_numeric
+
+# Cochran-Armitage Test for Trend
+non_top5_prop_test <- prop.trend.test(non_top5_prop_data$non_top5_count, non_top5_prop_data$total_count)
+print(non_top5_prop_test)
+```
+
+Then plot it:
+
+```{r}
+# Plot the non-top 5 small molecule proportion over time bins
+pNonTopProptime <- ggplot(non_top5_prop_data, aes(x = year_bin_numeric, y = 100*proportion_non_top5)) +
+  geom_line(color = "green3", size = 1) +  # Green line for trend
+  geom_point(color = "green3", size = 3) +  # Green dots for data points
+  labs(title = "% of SCAR Reports Involving Non-Top 5 Small Molecule Drugs Over Time",
+       x = "Binned Years",
+       y = "% of Reports Tied to Non-Top 5 Small Molecules") +
+  theme_minimal()
+```
+
+Let's commbine these:
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Create biologic proportion data
+biologic_prop_data <- scar_temporal_data %>%
+  group_by(year_bin) %>%
+  summarise(
+    count = sum(classification == "Biologic"),
+    total_count = n(),
+    proportion = count / total_count
+  ) %>%
+  mutate(category = "Biologics")
+
+# Create top 5 small molecule proportion data
+top5_prop_data <- scar_temporal_data %>%
+  filter(top_drug == TRUE) %>%
+  group_by(year_bin) %>%
+  summarise(
+    count = n(),
+    total_count = n_distinct(scar_temporal_data$compositeid[scar_temporal_data$year_bin == first(year_bin)]),
+    proportion = count / total_count
+  ) %>%
+  mutate(category = "Top 5 Small Molecules")
+
+# Create non-top 5 small molecule proportion data
+non_top5_prop_data <- scar_temporal_data %>%
+  filter(classification == "Small Molecule" & top_drug == FALSE) %>%
+  group_by(year_bin) %>%
+  summarise(
+    count = n(),
+    total_count = n_distinct(scar_temporal_data$compositeid[scar_temporal_data$year_bin == first(year_bin)]),
+    proportion = count / total_count
+  ) %>%
+  mutate(category = "Other Small Molecules")
+
+# Combine all datasets
+combined_prop_data <- bind_rows(biologic_prop_data, top5_prop_data, non_top5_prop_data)
+
+# Ensure year_bin is a factor to preserve the bin labels on the x-axis
+combined_prop_data <- combined_prop_data %>%
+  mutate(year_bin = factor(year_bin, levels = unique(year_bin)))  # Keep order of bins
+
+# Create combined line plot with actual bin labels
+pTrendCombined <- ggplot(combined_prop_data, aes(x = year_bin, y = proportion, color = category, group = category)) +
+  geom_line(size = 1.2, alpha = 0.9) +  # Line for trends
+  geom_point(size = 3, alpha = 0.9) +  # Dots for data points
+  scale_color_manual(values = c("Biologics" = "#A6CEE3",  # Light Blue
+                               "Other Small Molecules" = "#B2DF8A",  # Light Green
+                               "Top 5 Small Molecules" = "#FB9A99")) +  # Light Red/Pink
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +  # Show % labels
+  labs(title = "Proportion of SCAR Reports Over Time by Drug Category",
+       x = "Binned Years",
+       y = "% of Reports",
+       color = "Drug Category") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for clarity
+```
+
+
+###Biologics
+
+Now an interesting question - it's clear the number of biologics are increasing over time. But WHICH biologics? We've manually created a dictionary of biologics that we can import here.
+
+```{r}
+#biologic_drug_list <- read_csv("biologic_drug_list.csv")
+```
+
+Join this data to our scar_biologic_temporal_data
+
+```{r}
+# Subset biologic data
+scar_biologic_temporal_data <- scar_temporal_data[category == "Biologic",]
+
+# Merge biologic dictionary into the SCAR dataset
+scar_biologic_temporal_data <- scar_biologic_temporal_data %>%
+  left_join(biologic_drug_list, by = "drug_name")
+
+# Check for missing target/type classifications
+missing_biologics <- scar_biologic_temporal_data %>%
+  filter(classification == "Biologic" & is.na(target))
+
+# Print how many biologics are missing classifications
+print(paste(nrow(missing_biologics), "biologic drugs are missing target/type info. Check for naming mismatches."))
+
+# View a sample of merged data
+head(scar_biologic_temporal_data)
+
+```
+Now lets plot the trend in biologic types over time, like before
+
+```{r}
+# Bin years using Hmisc::cut2 (ensuring ~10 equal-sized bins)
+scar_biologic_temporal_data <- scar_biologic_temporal_data %>%
+  mutate(year_bin = cut2(report_year, g = 10))  # Bin into ~10 equal-sized groups
+
+# Summarize case counts for each biologic type within each year bin
+biologic_type_summary <- scar_biologic_temporal_data %>%
+  filter(classification == "Biologic") %>%
+  group_by(year_bin, type) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Create the stacked bar chart with labels 
+pTempBio <- ggplot(biologic_type_summary, aes(x = year_bin, y = count, fill = type)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.9) +  # Stacked bars with slight transparency
+  geom_text(aes(label = count), position = position_stack(vjust = 0.5), size = 3, color = "black") +  # Add count labels
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "SCAR Reports Over Time by Biologic Type",
+       x = "Binned Years",
+       y = "Number of Reports",
+       fill = "Biologic Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for clarity
+
+```
+
+Then plot proportions over time:
+
+```{r}
+# Summarize proportion of each biologic type within each year bin
+biologic_type_proportion <- scar_biologic_temporal_data %>%
+  filter(classification == "Biologic") %>%
+  group_by(year_bin, type) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(year_bin) %>%
+  mutate(proportion = count / sum(count)) %>%  # Compute proportions
+  mutate(year_bin_numeric = as.numeric(as.factor(year_bin)))  # Convert year_bin to numeric for plotting
+
+# Create the line plot with matching colors from Set2
+pTempBioTrend <- ggplot(biologic_type_proportion, aes(x = year_bin_numeric, y = proportion, color = type, group = type)) +
+  geom_line(size = 1.2) +  # Lines for trends
+  geom_point(size = 3) +  # Dots for data points
+  scale_color_brewer(palette = "Set2") +  # Use color, NOT fill
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +  # Display proportions as percentages
+  scale_x_continuous(breaks = biologic_type_proportion$year_bin_numeric, 
+                     labels = biologic_type_proportion$year_bin) +  # Use actual bin labels
+  labs(title = "Proportion of SCAR Reports Over Time by Biologic Type",
+       x = "Binned Years",
+       y = "% of Reports",
+       color = "Biologic Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for clarity
+```
+
+Now make a final multiplot
+
+```{r}
+pTemporalCombined <- pTemporalScar / pTrendCombined +
+  plot_layout(ncol = 1, heights = c(2, 1))
+
+pTempBioCombined <- pTempBio / pTempBioTrend +
+  plot_layout(ncol = 1, heights = c(2, 1))
+
+#Stack these on top of each other
+
+pTemporalFinal <- pTemporalCombined | pTempBioCombined
+```
+
+We're particularly interested in seeing whether ICI proportion has increased over time:
+
+```{r}
+# Calculate ICI proportion in each bin
+ici_proportion_data <- scar_biologic_temporal_data %>%
+  filter(classification == "Biologic") %>%
+  mutate(ICI_flag = ifelse(type == "ICI", 1, 0)) %>%  # Mark ICI reports
+  group_by(year_bin) %>%
+  summarise(
+    ICI_count = sum(ICI_flag),  # Total ICI reports in each bin
+    total_biologic_count = n(),  # Total biologic reports in each bin
+    proportion_ICI = ICI_count / total_biologic_count  # Compute ICI proportion
+  ) %>%
+  mutate(year_bin_numeric = as.numeric(as.factor(year_bin)))  # Convert to numeric for regression
+
+# Logistic Regression: Does ICI proportion increase over time?
+glm_ici <- glm(cbind(ICI_count, total_biologic_count - ICI_count) ~ year_bin_numeric, 
+               data = ici_proportion_data, 
+               family = binomial)
+
+summary(glm_ici)  # Check p-value for year_bin_numeric
+
+# Cochran-Armitage Test for Trend
+ici_trend_test <- prop.trend.test(ici_proportion_data$ICI_count, ici_proportion_data$total_biologic_count)
+print(ici_trend_test)
+```
+
+Just to be sure, test it by year:
+
+```{r}
+# Calculate ICI proportion for each year
+ici_proportion_yearly <- scar_biologic_temporal_data %>%
+  filter(classification == "Biologic") %>%
+  mutate(ICI_flag = ifelse(type == "ICI", 1, 0)) %>%  # Mark ICI reports
+  group_by(report_year) %>%
+  summarise(
+    ICI_count = sum(ICI_flag),  # Total ICI reports per year
+    total_biologic_count = n(),  # Total biologic reports per year
+    proportion_ICI = ICI_count / total_biologic_count  # Compute proportion
+  )
+
+# Logistic Regression: Does ICI proportion increase over time?
+glm_ici_yearly <- glm(cbind(ICI_count, total_biologic_count - ICI_count) ~ report_year, 
+                      data = ici_proportion_yearly, 
+                      family = binomial)
+
+summary(glm_ici_yearly)  # Check p-value for report_year
+
+# Cochran-Armitage Test for Trend (Uses yearly counts)
+ici_trend_test_yearly <- prop.trend.test(ici_proportion_yearly$ICI_count, ici_proportion_yearly$total_biologic_count)
+print(ici_trend_test_yearly)
+```
+
+###Statistics for trends
+
+Some of this is repeated. We'll use the cochrane-armitage test, both by year and by year_bin, to determine the dependence of proportion on time, for each category in both datasets. First, for all SCAR:
+
+```{r}
+# Function to compute all required statistics
+compute_trend_stats <- function(df) {
+  # Cochran-Armitage Test
+  compute_cochran_armitage <- function(df, time_col) {
+    counts <- table(df[[time_col]], df$category)
+    total_counts <- rowSums(counts)
+    p_values <- sapply(colnames(counts), function(category) {
+      test_result <- prop.trend.test(counts[, category], total_counts)
+      return(test_result$p.value)
+    })
+    return(p_values)
+  }
+
+  # Logistic Regression (GLM) p-value and Odds Ratio
+  compute_glm_stats <- function(df, time_col) {
+    glm_results <- sapply(unique(df$category), function(category) {
+      df$binary_outcome <- ifelse(df$category == category, 1, 0)  # Ensure correct outcome encoding
+      model <- glm(binary_outcome ~ df[[time_col]], data = df, family = binomial)  # Logistic regression
+      or <- exp(coef(model)[2])  # Exponentiate to get Odds Ratio
+      p_value <- summary(model)$coefficients[2,4]  # Extract p-value
+      return(c(p_value, or))
+    }, simplify = FALSE)
+    
+    results_df <- as.data.frame(do.call(rbind, glm_results))
+    colnames(results_df) <- c("GLM_P_Value", "OR")
+    results_df$Category <- rownames(results_df)
+    return(results_df)
+  }
+
+  # Compute all statistics
+  p_values_bin <- compute_cochran_armitage(df, "year_bin")
+  p_values_year <- compute_cochran_armitage(df, "report_year")
+  glm_bin <- compute_glm_stats(df, "year_bin")
+  glm_year <- compute_glm_stats(df, "report_year")
+
+  # Combine into a results table
+  trend_results <- data.frame(
+    Category = glm_bin$Category,
+    Cochran_P_Bin = p_values_bin[glm_bin$Category],
+    Cochran_P_Year = p_values_year[glm_bin$Category],
+    GLM_P_Bin = glm_bin$GLM_P_Value,
+    GLM_P_Year = glm_year$GLM_P_Value,
+    OR_By_Bin = glm_bin$OR,    # Now including OR by bin!
+    OR_By_Year = glm_year$OR   # OR by year remains as before
+  )
+
+  return(trend_results)
+}
+
+# Run the function
+trend_results_table <- compute_trend_stats(scar_temporal_data)
+
+# Print the final results table
+print(trend_results_table)
+```
+
+Apply this function to the biologics as well.
+
+```{r}
+# Function to compute all required statistics for biologic types
+compute_trend_stats_biologic <- function(df) {
+  # Cochran-Armitage Test
+  compute_cochran_armitage <- function(df, time_col) {
+    counts <- table(df[[time_col]], df$type)  # Group by biologic type
+    total_counts <- rowSums(counts)
+    p_values <- sapply(colnames(counts), function(biologic_type) {
+      test_result <- prop.trend.test(counts[, biologic_type], total_counts)
+      return(test_result$p.value)
+    })
+    return(p_values)
+  }
+
+  # Logistic Regression (GLM) p-value and Odds Ratio
+  compute_glm_stats <- function(df, time_col) {
+    glm_results <- sapply(unique(df$type), function(biologic_type) {
+      df$binary_outcome <- ifelse(df$type == biologic_type, 1, 0)  # Ensure correct outcome encoding
+      model <- glm(binary_outcome ~ df[[time_col]], data = df, family = binomial)  # Logistic regression
+      or <- exp(coef(model)[2])  # Exponentiate to get Odds Ratio
+      p_value <- summary(model)$coefficients[2,4]  # Extract p-value
+      return(c(p_value, or))
+    }, simplify = FALSE)
+    
+    results_df <- as.data.frame(do.call(rbind, glm_results))
+    colnames(results_df) <- c("GLM_P_Value", "OR")
+    results_df$Type <- rownames(results_df)
+    return(results_df)
+  }
+
+  # Compute all statistics
+  p_values_bin <- compute_cochran_armitage(df, "year_bin")
+  p_values_year <- compute_cochran_armitage(df, "report_year")
+  glm_bin <- compute_glm_stats(df, "year_bin")
+  glm_year <- compute_glm_stats(df, "report_year")
+
+  # Combine into a results table
+  trend_results <- data.frame(
+    Type = glm_bin$Type,
+    Cochran_P_Bin = p_values_bin[glm_bin$Type],
+    Cochran_P_Year = p_values_year[glm_bin$Type],
+    GLM_P_Bin = glm_bin$GLM_P_Value,
+    GLM_P_Year = glm_year$GLM_P_Value,
+    OR_By_Bin = glm_bin$OR,    # OR by bin
+    OR_By_Year = glm_year$OR   # OR by year
+  )
+
+  return(trend_results)
+}
+
+# Run the function
+trend_results_biologic <- compute_trend_stats_biologic(scar_biologic_temporal_data)
+
+# Print the final results table
+print(trend_results_biologic)
+```
+
+
+## THINGS TO DO
+
+1.  Scar analysis by category/ATC codes
+2.  Potentially fission combination drugs
