@@ -1,0 +1,1864 @@
+drug_name,drug_concept_id,N,cancer_drug_manual
+lenalidomide,19026972,309606,TRUE
+cyclophosphamide,1310317,95995,FALSE
+dexamethasone,1518254,90950,FALSE
+doxorubicin,1338512,79922,TRUE
+pomalidomide,43014237,78019,TRUE
+rituximab,1314273,73486,FALSE
+ibrutinib,44507848,73374,TRUE
+carboplatin,1344905,71866,TRUE
+nivolumab,45892628,69634,TRUE
+bevacizumab,1397141,65866,FALSE
+docetaxel,1315942,65811,TRUE
+paclitaxel,1378382,65687,TRUE
+vincristine,1308290,63991,TRUE
+fluorouracil,955632,55493,TRUE
+palbociclib,45892075,54031,TRUE
+pembrolizumab,45775965,53953,TRUE
+capecitabine,1337620,50042,TRUE
+venetoclax,35604205,49685,TRUE
+oxaliplatin,1318011,49016,TRUE
+trastuzumab,1387104,48758,TRUE
+etoposide,1350504,45896,TRUE
+leuprolide,1351541,44132,FALSE
+cisplatin,1397599,43719,TRUE
+ruxolitinib,40244464,43447,FALSE
+enzalutamide,42900250,42692,TRUE
+prednisone,1551099,39388,FALSE
+cytarabine,1311078,37770,TRUE
+bortezomib,1336825,37303,TRUE
+methotrexate,1305058,36965,FALSE
+gemcitabine,1314924,36617,TRUE
+imatinib,1304107,32051,TRUE
+cabozantinib,43012292,31634,TRUE
+leucovorin,1388796,29829,FALSE
+ipilimumab,40238188,29295,TRUE
+irinotecan,1367268,26890,TRUE
+lenvatinib,46221433,25891,TRUE
+atezolizumab,42629079,25793,TRUE
+everolimus,19011440,24531,FALSE
+erlotinib,1325363,24258,TRUE
+letrozole,1315946,22177,FALSE
+sunitinib,1336539,21696,TRUE
+dasatinib,1358436,20300,TRUE
+niraparib,1593861,19550,TRUE
+abiraterone,40239056,19400,TRUE
+prednisolone,1550557,19330,FALSE
+azacitidine,1314865,18592,TRUE
+bendamustine,19015523,18366,TRUE
+daratumumab,35605744,18079,TRUE
+pazopanib,40167554,18047,TRUE
+denosumab,40222444,17916,FALSE
+pemetrexed,1304919,17850,TRUE
+nilotinib,1394023,17742,TRUE
+ixazomib,35606214,17523,TRUE
+ribociclib,1592911,17121,TRUE
+osimertinib,35605522,16816,TRUE
+ifosfamide,19078187,16316,TRUE
+pertuzumab,42801287,16236,TRUE
+sorafenib,1363387,15879,TRUE
+carfilzomib,42873638,15741,TRUE
+trametinib,43532497,14778,TRUE
+durvalumab,1594034,14703,TRUE
+zoledronic acid,1524674,14528,FALSE
+temozolomide,1341149,14460,TRUE
+epirubicin,1344354,14125,TRUE
+regorafenib,42903460,14123,TRUE
+thalidomide,19137042,13781,FALSE
+olaparib,45892579,13560,TRUE
+cetuximab,1315411,13501,TRUE
+dabrafenib,43532299,13498,TRUE
+fulvestrant,1304044,12645,TRUE
+fludarabine,1395557,11766,TRUE
+melphalan,1301267,11049,TRUE
+obinutuzumab,44507676,10858,TRUE
+axitinib,42709322,10688,TRUE
+exemestane,1398399,9328,TRUE
+ponatinib,43013182,9106,TRUE
+daunorubicin,1311799,9095,TRUE
+pegaspargase,1326481,8760,TRUE
+anastrozole,1348265,8741,TRUE
+rucaparib,1718850,8717,TRUE
+tipiracil,35602757,8418,TRUE
+crizotinib,40242675,8259,TRUE
+tamoxifen,1436678,7870,FALSE
+abemaciclib,792649,7665,TRUE
+mercaptopurine,1436650,7469,FALSE
+vemurafenib,40241937,7416,TRUE
+brentuximab vedotin,40241969,7381,TRUE
+idelalisib,45776944,6654,TRUE
+pegfilgrastim,1325608,6622,FALSE
+asparaginase,19012585,6540,TRUE
+vismodegib,42709321,6375,TRUE
+vinorelbine,1343346,6298,TRUE
+lapatinib,1359548,6261,TRUE
+avapritinib,37498468,6135,TRUE
+bleomycin,1329241,6056,TRUE
+radium,45775578,5901,TRUE
+telotristat ethyl,1592541,5802,FALSE
+methylprednisolone,1506270,5698,FALSE
+goserelin,1366310,5676,FALSE
+procarbazine,1351779,5667,TRUE
+encorafenib,1559914,5638,TRUE
+afatinib,43533090,5627,TRUE
+blinatumomab,45892531,5525,TRUE
+selinexor,1361191,5415,TRUE
+octreotide,1522957,5389,FALSE
+alectinib,35604657,5361,TRUE
+lanreotide,1503501,5177,FALSE
+acalabrutinib,792764,5072,TRUE
+polatuzumab vedotin,1396729,4983,TRUE
+idarubicin,19078097,4891,TRUE
+binimetinib,1559930,4888,TRUE
+bosutinib,42900401,4835,TRUE
+levoleucovorin,40168303,4747,FALSE
+relugolix,739471,4690,FALSE
+axicabtagene ciloleucel,792844,4563,TRUE
+eribulin,40230712,4543,TRUE
+hydrocortisone,975125,4532,FALSE
+vinblastine,19008264,4502,TRUE
+filgrastim,1304850,4499,FALSE
+dacarbazine,1311409,4399,TRUE
+ramucirumab,44818489,4398,TRUE
+gefitinib,1319193,4360,TRUE
+sipuleucel-T,40224095,4306,TRUE
+alpelisib,1396423,4292,FALSE
+oxycodone,1124957,4257,FALSE
+mitoxantrone,1309188,3905,TRUE
+hydroxyurea,1377141,3898,FALSE
+placebo,19047135,3881,FALSE
+panitumumab,19100985,3859,TRUE
+topotecan,1378509,3838,TRUE
+bicalutamide,1344381,3741,FALSE
+apalutamide,963987,3713,TRUE
+fentanyl,1154029,3603,FALSE
+tucatinib,1145571,3421,TRUE
+mesna,1354698,3309,FALSE
+cobimetinib,35605804,3299,TRUE
+busulfan,1333357,3298,TRUE
+tisagenlecleucel,792737,3156,TRUE
+aflibercept,40244266,3145,FALSE
+isatuximab,37498969,3086,TRUE
+elotuzumab,35604032,3063,TRUE
+degarelix,19058410,3053,TRUE
+decitabine,19024728,2933,TRUE
+tremelimumab,741851,2862,TRUE
+dactinomycin,1311443,2858,TRUE
+enasidenib,793797,2722,TRUE
+gilteritinib,1355513,2717,TRUE
+carmustine,1350066,2683,TRUE
+avelumab,1593273,2640,TRUE
+ofatumumab,40167582,2626,TRUE
+chlorambucil,1390051,2532,TRUE
+mechlorethamine,1394337,2448,TRUE
+cabazitaxel,40222431,2444,TRUE
+sacituzumab,1145484,2434,TRUE
+ceritinib,44818466,2329,TRUE
+brigatinib,1594187,2303,TRUE
+ripretinib,1145752,2232,TRUE
+deferasirox,1786055,2209,FALSE
+thiotepa,19137385,2198,TRUE
+acetaminophen,1125315,2187,FALSE
+brexpiprazole,46275300,2175,FALSE
+midostaurin,1594003,2138,TRUE
+allopurinol,1167322,2073,FALSE
+enfortumab,37498261,2068,TRUE
+tretinoin,903643,2031,FALSE
+thioguanine,1437379,2028,FALSE
+nintedanib,45775396,2012,FALSE
+lorlatinib,35201733,2011,TRUE
+trabectedin,35603017,2005,TRUE
+triptorelin,1343039,1884,FALSE
+darbepoetin alfa,1304643,1852,FALSE
+morphine,1110410,1835,FALSE
+vindesine,19008336,1813,TRUE
+neratinib,793846,1712,TRUE
+temsirolimus,19092845,1707,TRUE
+inotuzumab ozogamicin,794068,1683,TRUE
+alemtuzumab,1312706,1630,FALSE
+levothyroxine,1501700,1613,FALSE
+panobinostat,46221435,1592,TRUE
+ondansetron,1000560,1525,FALSE
+vorinostat,1337651,1520,TRUE
+belantamab mafodotin,37002419,1517,TRUE
+gemtuzumab ozogamicin,42799711,1512,TRUE
+mitomycin,1389036,1505,TRUE
+pirarubicin,19093366,1496,TRUE
+cemiplimab,35200783,1462,TRUE
+clofarabine,19054821,1438,TRUE
+vandetanib,40238052,1402,TRUE
+lomustine,1391846,1393,TRUE
+pacritinib,779180,1358,TRUE
+sotorasib,1536963,1333,TRUE
+sodium chloride,967823,1321,FALSE
+celecoxib,1118084,1317,FALSE
+capmatinib,1145637,1312,TRUE
+ranitidine,961047,1259,FALSE
+ivosidenib,1560123,1250,TRUE
+tafasitamab,37002368,1249,TRUE
+interferon alfa-2b,1380068,1231,FALSE
+epcoritamab,1201211,1220,TRUE
+zanubrutinib,37497691,1210,TRUE
+tivozanib,36026750,1181,TRUE
+aspirin,1112807,1174,FALSE
+BCG,19086176,1148,FALSE
+romidepsin,40168385,1108,TRUE
+tazemetostat,37498602,1080,TRUE
+mogamulizumab,35200202,1071,TRUE
+darolutamide,1361291,1055,TRUE
+methadone,1103640,1051,FALSE
+cabergoline,1558471,1047,FALSE
+ropeginterferon alfa-2b,702407,1033,FALSE
+cyclosporine,19010482,1019,FALSE
+eltrombopag,19012346,987,FALSE
+cladribine,19054825,985,FALSE
+anagrelide,1381253,982,TRUE
+arsenic trioxide,1333379,955,TRUE
+fedratinib,1361614,950,TRUE
+pregabalin,734354,942,FALSE
+acyclovir,1703687,930,FALSE
+mitotane,1309161,926,FALSE
+tegafur,19056756,910,TRUE
+herpesvirus 1,42903942,905,FALSE
+peginterferon alfa-2a,1714165,897,FALSE
+dotatate,36249974,889,FALSE
+imiquimod,981691,886,FALSE
+teclistamab,741578,878,TRUE
+pralsetinib,37002765,875,TRUE
+entrectinib,37496447,870,TRUE
+immunoglobulin G,19117912,810,FALSE
+ingenol mebutate,42709320,787,FALSE
+ibandronate,1512480,787,FALSE
+omacetaxine mepesuccinate,19069046,779,TRUE
+tramadol,1103314,771,FALSE
+talazoparib,35201068,770,TRUE
+amylase,919204,756,FALSE
+asciminib,702133,752,TRUE
+tamsulosin,924566,737,FALSE
+doxycycline,1738521,729,FALSE
+ibritumomab tiuxetan,19068830,727,TRUE
+pamidronate,1511646,721,FALSE
+hyaluronidase,19073699,715,FALSE
+hydromorphone,1126658,705,FALSE
+nelarabine,19002912,704,TRUE
+folic acid,19111620,703,FALSE
+larotrectinib,1355705,703,TRUE
+sirolimus,19034726,699,FALSE
+selumetinib,37499520,698,TRUE
+brexucabtagene autoleucel,37002369,688,TRUE
+aprepitant,936748,674,FALSE
+aldesleukin,1309770,663,TRUE
+pexidartinib,1361445,659,TRUE
+duvelisib,35200763,637,TRUE
+epoetin alfa,1301125,636,FALSE
+belzutifan,701696,636,TRUE
+dexrazoxane,1353011,620,FALSE
+tocilizumab,40171288,611,FALSE
+copanlisib,792499,607,TRUE
+omeprazole,923645,597,FALSE
+metoclopramide,906780,595,FALSE
+cedazuridine / decitabine Oral,1146672,593,FALSE
+amivantamab,1536935,589,TRUE
+mobocertinib,701915,573,TRUE
+palonosetron,911354,568,FALSE
+bexarotene,1389888,566,TRUE
+dostarlimab,1536789,559,TRUE
+rasburicase,1304565,551,FALSE
+granisetron,1000772,549,FALSE
+luspatercept,37497705,544,FALSE
+acetate,19029306,543,FALSE
+tacrolimus,950637,542,FALSE
+idecabtagene vicleucel,36026868,539,TRUE
+dinutuximab,46221699,533,TRUE
+sonidegib,46275491,532,TRUE
+chlorpheniramine,1192710,520,FALSE
+cytosine,43525871,510,FALSE
+glofitamab,1201501,510,TRUE
+furosemide,956874,502,FALSE
+selpercatinib,1145791,501,TRUE
+mosunetuzumab,1301307,496,TRUE
+peginterferon alfa-2b,1797155,492,FALSE
+lurbinectedin,1146139,485,TRUE
+vipivotide tetraxetan,779271,480,TRUE
+olaratumab,1718346,478,TRUE
+raltitrexed,19038536,476,TRUE
+pemigatinib,37499576,474,TRUE
+loxoprofen,19071936,469,FALSE
+canakinumab,40161669,459,FALSE
+valacyclovir,1717704,447,FALSE
+pralatrexate,40166461,445,TRUE
+levetiracetam,711584,444,FALSE
+gabapentin,797399,443,FALSE
+glasdegib,1355795,434,TRUE
+tapentadol,19026459,427,FALSE
+mycophenolate mofetil,19003999,415,FALSE
+valproate,745466,415,FALSE
+isotretinoin,984232,405,FALSE
+glucose,1560524,398,FALSE
+lisocabtagene maraleucel,739856,387,TRUE
+ixabepilone,19025348,377,TRUE
+dacomitinib,35200803,373,TRUE
+ciltacabtagene autoleucel,779144,373,TRUE
+teniposide,19136750,372,TRUE
+pasireotide,43012417,367,FALSE
+sargramostim,1308432,367,FALSE
+diphenhydramine,1129625,364,FALSE
+amsacrine,19017810,355,TRUE
+flutamide,1356461,354,FALSE
+erdafitinib,1511250,350,TRUE
+pentostatin,19031224,338,TRUE
+interferon alfa-2a,1379969,337,FALSE
+adagrasib,1301337,337,TRUE
+metformin,1503297,325,FALSE
+somatropin,1584910,320,FALSE
+estramustine,1349025,318,TRUE
+diclofenac,1124300,310,FALSE
+necitumumab,35606215,308,TRUE
+dexchlorpheniramine,1188114,299,FALSE
+voriconazole,1714277,297,FALSE
+tepotinib,739739,297,TRUE
+naproxen,1115008,296,FALSE
+platinum,42900468,295,TRUE
+megestrol,1300978,294,FALSE
+toripalimab,747052,291,TRUE
+betamethasone,920458,284,FALSE
+bromocriptine,730548,282,FALSE
+esomeprazole,904453,275,FALSE
+enoxaparin,1301025,275,FALSE
+lenograstim,19009705,270,FALSE
+aclarubicin,19057483,263,TRUE
+umbralisib,739804,261,TRUE
+hydroxychloroquine,1777087,257,FALSE
+pantoprazole,948078,253,FALSE
+salicylic acid,964407,248,FALSE
+lidocaine,989878,246,FALSE
+lansoprazole,929887,241,FALSE
+azathioprine,19014878,241,FALSE
+toremifene,1342346,239,TRUE
+plerixafor,19017581,238,FALSE
+deferiprone,19011091,236,FALSE
+finasteride,996416,234,FALSE
+elranatamab,746391,232,TRUE
+famotidine,953076,228,FALSE
+cyproterone,19010792,227,FALSE
+amlodipine,1332418,226,FALSE
+ibuprofen,1177480,224,FALSE
+uracil,19006877,223,FALSE
+clarithromycin,1750500,221,FALSE
+trimethoprim,1705674,221,FALSE
+posaconazole,1704139,219,FALSE
+tisotumab,701957,217,TRUE
+dutasteride,989482,213,FALSE
+fenofibrate,1551803,213,FALSE
+fluconazole,1754994,212,FALSE
+levofloxacin,1742253,210,FALSE
+fosaprepitant,35605594,209,FALSE
+infliximab,937368,206,FALSE
+gadobutrol,19048493,204,FALSE
+ganciclovir,1757803,204,FALSE
+dipyrone,19031397,202,FALSE
+pegvisomant,1503432,201,FALSE
+streptozocin,19136210,199,TRUE
+calcium,19018544,194,FALSE
+dupilumab,1593467,194,FALSE
+lorazepam,791967,193,FALSE
+belinostat,45776670,193,TRUE
+aripiprazole,757688,191,FALSE
+spironolactone,970250,189,FALSE
+apixaban,43013024,189,FALSE
+immunoglobulin A,43531966,184,FALSE
+acitretin,929638,183,FALSE
+ciprofloxacin,1797513,182,FALSE
+clodronic acid,19024249,179,FALSE
+TMP / SMX Inj,40220482,178,FALSE
+isavuconazonium,46221284,176,FALSE
+medroxyprogesterone,1500211,173,FALSE
+tiotropium,1106776,172,FALSE
+atorvastatin,1545958,172,FALSE
+vancomycin,1707687,167,FALSE
+rivaroxaban,40241331,166,FALSE
+loperamide,991876,166,FALSE
+relatlimab,779239,166,TRUE
+raloxifene,1513103,164,FALSE
+alendronate,1557272,163,FALSE
+treosulfan,19042545,161,TRUE
+testosterone,1636780,160,FALSE
+loncastuximab tesirine,1536834,160,TRUE
+talquetamab,746340,160,TRUE
+lutetium,44816340,159,TRUE
+ketoconazole,985708,158,FALSE
+febuxostat,19017742,158,FALSE
+amitriptyline,710062,158,FALSE
+3-iodobenzylguanidine,19019942,157,FALSE
+dexamethasone / sodium phosphate Inj,40027461,157,FALSE
+albuterol,1154343,156,FALSE
+duloxetine,715259,156,FALSE
+ursodeoxycholate,988095,150,FALSE
+omalizumab,1110942,150,FALSE
+calaspargase pegol,1510939,150,FALSE
+romiplostim,19032407,148,FALSE
+cholecalciferol,19095164,146,FALSE
+meloxicam,1150345,142,FALSE
+codeine,1201620,137,FALSE
+buprenorphine,1133201,137,FALSE
+gonadorelin,19089810,137,FALSE
+etanercept,1151789,135,FALSE
+clemastine,1197677,134,FALSE
+potassium,19049024,133,FALSE
+lymphocyte immune globulin,19136207,132,FALSE
+tebentafusp,1758886,132,TRUE
+simvastatin,1539403,130,FALSE
+valganciclovir,1703063,130,FALSE
+cetirizine,1149196,130,FALSE
+budesonide,939259,129,FALSE
+mirvetuximab soravtansine,741947,129,TRUE
+apremilast,44816294,126,FALSE
+vitamin D,19009405,125,FALSE
+sodium bicarbonate,939506,125,FALSE
+potassium chloride,19049105,125,FALSE
+cinacalcet,1548111,124,FALSE
+amphotericin B,1717240,123,FALSE
+methenolone,19004621,123,FALSE
+domperidone,19037833,122,FALSE
+hydrocodone,1174888,121,FALSE
+atropine,914335,121,FALSE
+baclofen,715233,119,FALSE
+micafungin,19018013,119,FALSE
+heparin,1367571,119,FALSE
+pioglitazone,1525215,118,FALSE
+metronidazole,1707164,115,FALSE
+prochlorperazine,752061,114,FALSE
+naxitamab,739531,113,TRUE
+triamcinolone,903963,112,FALSE
+ketoprofen,1185922,112,FALSE
+magnesium oxide,993631,111,FALSE
+mycophenolate,19068900,110,FALSE
+montelukast,1154161,110,FALSE
+anakinra,1114375,109,FALSE
+eculizumab,19080458,109,FALSE
+diazepam,723013,108,FALSE
+pirtobrutinib,1301683,108,TRUE
+alfacalcidol,19014202,107,FALSE
+doxazosin,1363053,107,FALSE
+alfuzosin,930021,106,FALSE
+meropenem,1709170,106,FALSE
+pirfenidone,45775206,105,FALSE
+ketamine,785649,102,FALSE
+levonorgestrel,1589505,102,FALSE
+metoprolol,1307046,102,FALSE
+fostamatinib,1510328,102,FALSE
+mannitol,994058,101,FALSE
+cortisone,1507705,100,FALSE
+adalimumab,1119119,99,FALSE
+netupitant,45774966,99,FALSE
+cedazuridine,1146666,99,TRUE
+dihematoporphyrin ether,19089602,98,FALSE
+rolapitant,46287434,98,FALSE
+caspofungin,1718054,97,FALSE
+ublituximab,1301397,96,FALSE
+calcium carbonate,19035704,95,FALSE
+olanzapine,785788,94,FALSE
+cromolyn,1152631,93,FALSE
+histrelin,1366773,93,FALSE
+tofacitinib,42904205,93,FALSE
+vitamin B12,1308738,92,FALSE
+bendroflumethiazide,1316354,92,FALSE
+cytarabine / daunorubicin Inj,37499291,92,TRUE
+trofosfamide,19101677,91,TRUE
+fruquintinib,747237,91,TRUE
+daptomycin,1786617,90,FALSE
+itraconazole,1703653,89,FALSE
+carbamazepine,740275,89,FALSE
+clonazepam,798874,88,FALSE
+ascorbic acid,19011773,88,FALSE
+vitamin D3,42709324,87,FALSE
+clobetasol,998415,87,FALSE
+aminolevulinic acid,904351,86,FALSE
+midazolam,708298,85,FALSE
+dextromethorphan,1119510,85,FALSE
+thyrotropin alfa,19063297,85,FALSE
+ceftriaxone,1777806,84,FALSE
+silodosin,19012925,84,FALSE
+phenytoin,740910,84,FALSE
+ambrisentan,1337068,83,FALSE
+azithromycin,1734104,83,FALSE
+dantrolene,711714,81,FALSE
+etoricoxib,19011355,80,FALSE
+valrubicin,19012543,80,TRUE
+floxuridine,1355509,79,TRUE
+elacestrant,1301646,79,TRUE
+tegafur / uracil Oral,40091379,77,TRUE
+sodium fluoride,19069022,77,FALSE
+etodolac,1195492,76,FALSE
+trifluridine,905078,76,FALSE
+mifepristone,1508439,75,FALSE
+clopidogrel,1322184,75,FALSE
+warfarin,1310149,75,FALSE
+yttrium,44816338,74,TRUE
+melphalan flufenamide,740067,74,TRUE
+ethinyl estradiol,1549786,73,FALSE
+denileukin diftitox,19051642,73,TRUE
+deferoxamine,1711947,72,FALSE
+methoxsalen,905223,72,FALSE
+sildenafil,1316262,72,FALSE
+retifanlimab,1302024,72,TRUE
+estradiol,1548195,71,FALSE
+futibatinib,1301597,71,TRUE
+pravastatin,1551860,69,FALSE
+dalteparin,1301065,69,FALSE
+zidovudine,1710612,69,FALSE
+rabeprazole,911735,68,FALSE
+lamivudine,1704183,68,FALSE
+belumosudil,701423,68,FALSE
+clonidine,1398937,67,FALSE
+danazol,1511449,67,FALSE
+infigratinib,1536975,67,TRUE
+quizartinib,746225,66,TRUE
+iodine,1780601,65,FALSE
+gadolinium,42899255,64,FALSE
+loratadine,1107830,64,FALSE
+lisinopril,1308216,64,FALSE
+lipegfilgrastim,44506753,64,FALSE
+isavuconazole,35606695,63,FALSE
+ribavirin,1762711,62,FALSE
+diazoxide,1523280,62,FALSE
+propranolol,1353766,61,FALSE
+entecavir,1711246,61,FALSE
+fexofenadine,1153428,61,FALSE
+olutasidenib,742050,61,TRUE
+sodium iodide,19069873,60,FALSE
+cimetidine,997276,60,FALSE
+mycophenolic acid,19012565,59,FALSE
+cefazolin,1771162,59,FALSE
+acetaminophen / oxycodone ER Oral,44814284,58,FALSE
+amifostine,1350040,58,FALSE
+rosuvastatin,1510813,58,FALSE
+rifaximin,1735947,58,FALSE
+moxetumomab pasudotox,35200995,58,TRUE
+gozetotide,1758656,58,FALSE
+water,19010309,57,FALSE
+tadalafil,1336926,56,FALSE
+tranexamic acid,1303425,55,FALSE
+promethazine,1153013,54,FALSE
+hydroxyzine,777221,53,FALSE
+zolpidem,744740,53,FALSE
+siltuximab,44818461,53,FALSE
+magnesium,19124906,52,FALSE
+menatetrenone,19072027,52,FALSE
+arsenic,19010961,52,FALSE
+uridine triacetate,46287389,52,FALSE
+cefepime,1748975,51,FALSE
+mirabegron,42873636,51,FALSE
+ipratropium,1112921,51,FALSE
+polyethylene glycol 3350,986417,51,FALSE
+mirtazapine,725131,51,FALSE
+solifenacin,916005,50,FALSE
+margetuximab,739518,50,TRUE
+fluticasone,1149380,49,FALSE
+risperidone,735979,49,FALSE
+estrogens,1549080,49,FALSE
+amoxicillin,1713332,49,FALSE
+bupivacaine,732893,49,FALSE
+ambroxol,19088167,49,FALSE
+teduglutide,43013171,49,FALSE
+cidofovir,1745072,48,FALSE
+alprazolam,781039,47,FALSE
+losartan,1367500,47,FALSE
+haloperidol,766529,47,FALSE
+acetaminophen / hydrocodone Oral,40002705,47,FALSE
+interferon gamma-1b,1380191,47,FALSE
+tagraxofusp,1356361,47,TRUE
+mupirocin,951511,46,FALSE
+epinephrine,1343916,46,FALSE
+pancrelipase,990340,46,FALSE
+abatacept,1186087,46,FALSE
+calcium carbonate / cholecalciferol ER Oral,40154630,46,FALSE
+venlafaxine,743670,45,FALSE
+cefuroxime,1778162,45,FALSE
+carbazochrome,19024535,45,FALSE
+minocycline,1708880,44,FALSE
+metyrapone,19007490,44,FALSE
+ethiodized oil,19050016,44,FALSE
+carbocysteine,19041843,43,FALSE
+pip / tazo Inj,46275426,43,FALSE
+HCTZ,974166,43,FALSE
+nystatin,922570,43,FALSE
+momelotinib,746600,43,TRUE
+glycerin,961145,42,FALSE
+calcitriol,19035631,42,FALSE
+tolvaptan,19036797,42,FALSE
+bisoprolol,1338005,42,FALSE
+cephalexin,1786621,42,FALSE
+terazosin,1341238,41,FALSE
+nilutamide,1315286,41,FALSE
+ramipril,1334456,41,FALSE
+letermovir,792929,41,FALSE
+enalapril,1341927,40,FALSE
+omacetaxine,45775576,40,TRUE
+linezolid,1736887,40,FALSE
+clindamycin,997881,40,FALSE
+vedolizumab,45774639,40,FALSE
+nirogacestat,747349,40,TRUE
+gentamicin,45892419,39,FALSE
+sertraline,739138,39,FALSE
+tinzaparin,1308473,39,FALSE
+nelfinavir,1715472,39,FALSE
+vonoprazan,779984,39,FALSE
+trilaciclib,739887,39,FALSE
+ifosfamide / mesna Inj,40048653,38,TRUE
+lacosamide,19087394,38,FALSE
+interferon beta-1b,713196,38,FALSE
+rifampin,1763204,37,FALSE
+amikacin,1790868,37,FALSE
+dexmedetomidine,19061088,37,FALSE
+sofosbuvir,44785094,36,FALSE
+propofol,753626,36,FALSE
+pipobroman,19046625,36,TRUE
+ergocalciferol,19045045,36,FALSE
+mesalamine,968426,36,FALSE
+tenofovir disoproxil,1710281,36,FALSE
+valsartan,1308842,36,FALSE
+ritonavir,1748921,36,FALSE
+amantadine,19087090,36,FALSE
+ketorolac,1136980,36,FALSE
+calcitonin,42900359,36,FALSE
+evolocumab,46287466,36,FALSE
+liothyronine,1505346,35,FALSE
+levocetirizine,1136422,35,FALSE
+lactulose,987245,35,FALSE
+gadoxetate,19031583,35,FALSE
+oxygen,19025274,35,FALSE
+risedronate,1516800,35,FALSE
+dronabinol,1037005,34,FALSE
+dimethindene,19028947,34,FALSE
+gadoterate meglumine,43526404,34,FALSE
+calcipotriene,908921,34,FALSE
+acetylcysteine,1139042,34,FALSE
+"sennosides, USP",938268,33,FALSE
+magnesium sulfate,19093848,33,FALSE
+tropisetron,19002800,33,FALSE
+salmon calcitonin,1537655,33,FALSE
+penicillin V,1729720,33,FALSE
+soybean oil,19070224,32,FALSE
+desmopressin,1517070,32,FALSE
+lamotrigine,705103,32,FALSE
+oxymorphone,1125765,32,FALSE
+ranibizumab,19080982,32,FALSE
+carvedilol,1346823,31,FALSE
+sulindac,1236607,31,FALSE
+droxidopa,44814542,31,FALSE
+dapsone,1711759,31,FALSE
+alteplase,1347450,31,FALSE
+tipiracil / trifluridine Oral,35602760,31,TRUE
+dexketoprofen,19056874,30,FALSE
+luteinizing hormone,1589795,30,FALSE
+nefopam,19015602,30,FALSE
+atenolol,1314002,30,FALSE
+albumin human,1344143,30,FALSE
+daclatasvir,46221696,30,FALSE
+nifedipine,1318853,30,FALSE
+avatrombopag,1510483,30,FALSE
+tobramycin,902722,29,FALSE
+indomethacin,1178663,29,FALSE
+naloxone,1114220,29,FALSE
+vigabatrin,19020002,29,FALSE
+topiramate,742267,29,FALSE
+iopromide,19003206,29,FALSE
+escitalopram,715939,29,FALSE
+edoxaban,45892847,29,FALSE
+buserelin,19033280,28,FALSE
+calcium gluconate,19037038,28,FALSE
+paricalcitol,1517740,28,FALSE
+cannabidiol,1510417,28,FALSE
+emtricitabine,1703069,28,FALSE
+aliskiren,1317967,28,FALSE
+citalopram,797617,28,FALSE
+osilodrostat,37499303,28,FALSE
+isoniazid,1782521,27,FALSE
+treprostinil,1327256,27,FALSE
+oxcarbazepine,718122,27,FALSE
+mometasone,905233,27,FALSE
+ketotifen,986117,26,FALSE
+calcium lactate,19058896,26,FALSE
+chlorhexidine,1790812,26,FALSE
+gelatin,19058092,26,FALSE
+chlormadinone,19026733,26,FALSE
+somatostatin,19136066,26,FALSE
+raltegravir,1712889,26,FALSE
+thiosulfate,45775550,26,FALSE
+vitamin B6,1353228,26,FALSE
+brotizolam,19039262,25,FALSE
+ropivacaine,1136487,25,FALSE
+interferon alfa-n1,19044394,25,FALSE
+dalotuzumab,43560324,25,TRUE
+ceftazidime,1776684,25,FALSE
+palifermin,19038562,25,FALSE
+isosorbide,1383815,25,FALSE
+oxybutynin,918906,25,FALSE
+tositumomab,19068894,25,TRUE
+nitroglycerin,1361711,25,FALSE
+ziconotide,19005061,24,FALSE
+clozapine,800878,24,FALSE
+calcium aspartate,19071869,24,FALSE
+simeprevir,44785086,24,FALSE
+verteporfin,912803,24,FALSE
+zopiclone,19044883,24,FALSE
+gemfibrozil,1558242,24,FALSE
+naloxone / oxycodone ER Oral,45774941,24,FALSE
+moxifloxacin,1716903,24,FALSE
+bupropion,750982,24,FALSE
+olmesartan,40226742,24,FALSE
+parathyroid hormone,43532113,24,FALSE
+trazodone,703547,24,FALSE
+vitamin E,19009540,24,FALSE
+verapamil,1307863,23,FALSE
+erythromycin,1746940,23,FALSE
+docusate,941258,23,FALSE
+interferon beta-1a,722424,23,FALSE
+sucralfate,1036228,23,FALSE
+capivasertib,747200,23,TRUE
+dipyridamole,1331270,23,FALSE
+fludrocortisone,1555120,23,FALSE
+progesterone,1552310,22,FALSE
+atovaquone,1781733,22,FALSE
+acetazolamide,929435,22,FALSE
+rocuronium,19003953,22,FALSE
+norepinephrine,1321341,22,FALSE
+sulfamethoxazole,1836430,22,FALSE
+quetiapine,766814,22,FALSE
+teriflunomide,42900584,22,FALSE
+beclomethasone,1115572,22,FALSE
+curcumin,19072030,22,FALSE
+leflunomide,1101898,22,FALSE
+hydroxocobalamin,1377023,21,FALSE
+paroxetine,722031,21,FALSE
+iohexol,19080985,21,FALSE
+nitrogen,19020477,21,FALSE
+ledipasvir,45775020,21,FALSE
+glutathione,19061083,21,FALSE
+lithium,19124477,20,FALSE
+dimenhydrinate,928744,20,FALSE
+tigecycline,1742432,20,FALSE
+certolizumab pegol,912263,20,FALSE
+ferrous sulfate,1396131,20,FALSE
+teicoplanin,19078399,20,FALSE
+methocarbamol,704943,20,FALSE
+chlorpromazine,794852,20,FALSE
+naldemedine,1593619,20,FALSE
+maribavir,702291,20,FALSE
+altretamine,1368823,19,TRUE
+torsemide,942350,19,FALSE
+pyridoxine,19005046,19,FALSE
+tazobactam,1741122,19,FALSE
+butylscopolamine,40234201,19,FALSE
+podofilox,947705,19,FALSE
+digoxin,1326303,19,FALSE
+protease,931973,19,FALSE
+tenofovir,19011093,19,FALSE
+colchicine,1101554,19,FALSE
+sufentanil,19078219,19,FALSE
+memantine,701322,19,FALSE
+glycopyrronium,45775571,19,FALSE
+ocrelizumab,1593457,19,FALSE
+fondaparinux,1315865,18,FALSE
+indacaterol,40240664,18,FALSE
+amiodarone,1309944,18,FALSE
+iopamidol,19081224,18,FALSE
+phenobarbital,734275,18,FALSE
+auranofin,1114771,18,FALSE
+mirikizumab,746977,17,FALSE
+samarium,1365720,17,TRUE
+palivizumab,537647,17,FALSE
+thyroid (USP),1501309,17,FALSE
+remifentanil,19016749,17,FALSE
+clavulanate,1759842,17,FALSE
+corticotropin,1541079,17,FALSE
+tazarotene,947416,17,FALSE
+quinagolide,19024140,17,FALSE
+L1 protein,529076,17,FALSE
+formoterol,1196677,16,FALSE
+disulfiram,735850,16,FALSE
+methylphenidate,705944,16,FALSE
+abacavir,1736971,16,FALSE
+phentolamine,1335539,16,FALSE
+fingolimod,40226579,16,FALSE
+insulin glargine,1502905,16,FALSE
+pentamidine,1730370,16,FALSE
+pyridostigmine,759740,16,FALSE
+epoetin beta,19001311,16,FALSE
+iron,1360067,16,FALSE
+fluoxetine,755695,16,FALSE
+aclidinium,42873639,16,FALSE
+alirocumab,46275447,16,FALSE
+nicardipine,1318137,16,FALSE
+pimavanserin,42628962,16,FALSE
+caffeine,1134439,16,FALSE
+prazosin,1350489,16,FALSE
+desipramine,716968,15,FALSE
+Candida albicans,538530,15,FALSE
+indium,43012200,15,FALSE
+diethylstilbestrol,1525866,15,FALSE
+olopatadine,915855,15,FALSE
+Escherichia coli,19030957,15,FALSE
+ethambutol,1749301,15,FALSE
+nortriptyline,721724,15,FALSE
+insulin lispro,1550023,15,FALSE
+petrolatum,19033354,15,FALSE
+dabigatran etexilate,40228152,15,FALSE
+hydralazine,1373928,15,FALSE
+basiliximab,19038440,15,FALSE
+irbesartan,1347384,15,FALSE
+rice oil,42899800,15,FALSE
+ezetimibe,1526475,15,FALSE
+sevelamer,952004,14,FALSE
+cyclobenzaprine,778711,14,FALSE
+alitretinoin,941052,14,FALSE
+ustekinumab,40161532,14,FALSE
+tizanidine,778474,14,FALSE
+maraviroc,1787101,14,FALSE
+chloroquine,1792515,14,FALSE
+alprostadil,1381504,14,FALSE
+bismuth,19025138,14,FALSE
+polyvinyl alcohol,948856,14,FALSE
+adapalene,981774,14,FALSE
+cyclizine,909358,13,FALSE
+macitentan,44507580,13,FALSE
+fluindione,19113013,13,FALSE
+methimazole,1504620,13,FALSE
+levamisole,1389464,13,FALSE
+candesartan,1351557,13,FALSE
+diltiazem,1328165,13,FALSE
+zinc oxide,911064,13,FALSE
+alpha 1-antitrypsin,1169352,13,FALSE
+droperidol,739323,13,FALSE
+naloxegol,45774613,13,FALSE
+dasabuvir,45892558,13,FALSE
+oxazepam,724816,13,FALSE
+perindopril,1373225,13,FALSE
+polyethylene glycol 4000,42899937,13,FALSE
+artesunate,19018511,13,FALSE
+carbidopa / levodopa Oral,45892916,13,FALSE
+cefpodoxime,1749008,13,FALSE
+tenofovir alafenamide,35605546,13,FALSE
+amifampridine,1355889,13,FALSE
+pyridoxal,19059817,12,FALSE
+acetaminophen / codeine Effervescent Oral,44817909,12,FALSE
+piperacillin,1746114,12,FALSE
+thiamine,19137312,12,FALSE
+nitrofurantoin,920293,12,FALSE
+roflumilast,40236897,12,FALSE
+lercanidipine,19015802,12,FALSE
+iron sucrose,1395773,12,FALSE
+norethindrone,1521369,12,FALSE
+atracurium,19014341,12,FALSE
+turmeric oil,43525900,12,FALSE
+nimesulide,19069425,12,FALSE
+paliperidone,703244,12,FALSE
+glimepiride,1597756,12,FALSE
+citrate,19011034,12,FALSE
+polaprezinc,1361281,12,FALSE
+hyaluronate,787787,12,FALSE
+pentazocine,1130585,12,FALSE
+secukinumab,45892883,12,FALSE
+niacinamide,19018419,12,FALSE
+velpatasvir,36249204,12,FALSE
+talc,1036667,12,FALSE
+menthol,901656,12,FALSE
+picosulfurate,45775584,12,FALSE
+cisatracurium,19015726,12,FALSE
+tildrakizumab,35200139,12,FALSE
+temazepam,836715,11,FALSE
+lactate,19011035,11,FALSE
+teriparatide,1521987,11,FALSE
+labetalol,1386957,11,FALSE
+dalfampridine,40170680,11,FALSE
+ferric carboxymaltose,43560392,11,FALSE
+phenoxybenzamine,1335301,11,FALSE
+clevidipine,19089969,11,FALSE
+pheniramine,933952,11,FALSE
+estrogens,19049228,11,FALSE
+glyceryl,740035,11,FALSE
+suvorexant,45775760,11,FALSE
+fesoterodine,19027958,11,FALSE
+quinacrine,19060400,11,FALSE
+melatonin,1301152,11,FALSE
+desloratadine,1103006,11,FALSE
+dimethicone,916662,11,FALSE
+lidocaine / prilocaine Medicated Patch,42629095,11,FALSE
+pentosan polysulfate,924151,11,FALSE
+triamterene,904542,11,FALSE
+pibrentasvir,793844,11,FALSE
+phenylephrine,1135766,11,FALSE
+benzydamine,19019620,11,FALSE
+budesonide / formoterol / glycopyrronium Metered Dose Inhaler,37002305,11,FALSE
+netupitant / palonosetron Oral,45774968,11,FALSE
+zonisamide,744798,10,FALSE
+magnesium chloride,19092849,10,FALSE
+modafinil,710650,10,FALSE
+levodopa,789578,10,FALSE
+theophylline,1237049,10,FALSE
+urea,906914,10,FALSE
+telmisartan,1317640,10,FALSE
+ubidecarenone,1351115,10,FALSE
+dexlansoprazole,19039926,10,FALSE
+flurbiprofen,1156378,10,FALSE
+meperidine,1102527,10,FALSE
+clobazam,19050832,10,FALSE
+sodium gualenate,746871,10,FALSE
+lubiprostone,987366,10,FALSE
+ertapenem,1717963,10,FALSE
+eflornithine,978236,10,FALSE
+collagenase Clostridium histolyticum,40172153,10,FALSE
+cyproheptadine,1110727,10,FALSE
+azosemide,19018517,10,FALSE
+ferrous fumarate,1595799,10,FALSE
+scopolamine,965748,10,FALSE
+dihydrocodeine,1189596,10,FALSE
+aceclofenac,19029393,10,FALSE
+ticagrelor,40241186,10,FALSE
+ombitasvir / paritaprevir / ritonavir Oral,45892556,10,FALSE
+factor VIII,1352213,10,FALSE
+asparagine,19011069,10,FALSE
+zinc,19010696,10,FALSE
+ivermectin,1784444,10,FALSE
+botulinum toxin type A,729855,10,FALSE
+methoxy polyethylene glycol-epoetin beta,19015768,9,FALSE
+acenocoumarol,19024063,9,FALSE
+dimethyl fumarate,43526424,9,FALSE
+mebendazole,1794280,9,FALSE
+silver sulfadiazine,966956,9,FALSE
+cilostazol,1350310,9,FALSE
+mepolizumab,35606631,9,FALSE
+nebivolol,1314577,9,FALSE
+deflazacort,19086888,9,FALSE
+eslicarbazepine,44507780,9,FALSE
+ciclopirox,950098,9,FALSE
+calcium acetate,951469,9,FALSE
+cefotaxime,1774470,9,FALSE
+glatiramer,751889,9,FALSE
+arginine,19006410,9,FALSE
+nitrous oxide,19021129,9,FALSE
+defibrotide,42898933,9,FALSE
+silver nitrate,966913,9,FALSE
+foscarnet,1724700,9,FALSE
+sitagliptin,1580747,9,FALSE
+minoxidil,1309068,9,FALSE
+opium,923829,9,FALSE
+glucarpidase,42709319,9,FALSE
+telotristat,1592537,9,FALSE
+alizapride,19030087,9,FALSE
+zirconium,44816339,9,FALSE
+sevoflurane,19039298,8,FALSE
+didanosine,1724869,8,FALSE
+naltrexone,1714319,8,FALSE
+fluvoxamine,751412,8,FALSE
+sapanisertib,37002782,8,TRUE
+pancreatin,926487,8,FALSE
+dolutegravir,43560385,8,FALSE
+technetium,702006,8,FALSE
+magnesium citrate,967861,8,FALSE
+sugammadex,35604506,8,FALSE
+dapagliflozin,44785829,8,FALSE
+nicotine,718583,8,FALSE
+efavirenz,1738135,8,FALSE
+umeclidinium,44785907,8,FALSE
+polysaccharide-K,40220969,8,FALSE
+clotiazepam,19068821,8,FALSE
+C1 esterase inhibitor,45892906,8,FALSE
+ephedrine,1143374,8,FALSE
+dofetilide,1362979,8,FALSE
+tromethamine,19006047,8,FALSE
+emtricitabine / tenofovir disoproxil Oral,40124350,8,FALSE
+tilidine,19002431,8,FALSE
+dicloxacillin,1724666,8,FALSE
+nimorazole,19019176,8,FALSE
+baricitinib,1510627,8,FALSE
+golimumab,19041065,8,FALSE
+pentoxifylline,1331247,8,FALSE
+epinastine,943634,8,FALSE
+sarilumab,1594587,8,FALSE
+risankizumab,1511348,8,FALSE
+piflufolastat,1537049,8,FALSE
+caplacizumab,1366428,8,FALSE
+primidone,751347,7,FALSE
+sodium phosphate,939871,7,FALSE
+fibrinogen,19054702,7,FALSE
+donepezil,715997,7,FALSE
+indapamide,978555,7,FALSE
+eszopiclone,757352,7,FALSE
+succinylcholine,836208,7,FALSE
+alginic acid,19030059,7,FALSE
+dexpanthenol,988294,7,FALSE
+coenzyme A,42903827,7,FALSE
+famciclovir,1703603,7,FALSE
+felbinac,19100761,7,FALSE
+prednimustine,19135793,7,TRUE
+azilsartan,40235485,7,FALSE
+ofloxacin,923081,7,FALSE
+pitavastatin,40165636,7,FALSE
+colesevelam,1518148,7,FALSE
+tetrabenazine,836877,7,FALSE
+stavudine,1781406,7,FALSE
+sodium polystyrene sulfonate,19078126,7,
+acetaminophen / tramadol Oral,40223205,7,
+daclizumab,19036892,7,
+vidarabine,908126,7,
+darunavir,1756831,7,
+molgramostim,19009676,7,
+levocarnitine,1553610,7,
+clotrimazole,1000632,7,
+desonide,917205,7,
+dutasteride / tamsulosin Oral,40222570,7,
+methylene blue,905518,7,
+exenatide,1583722,7,
+linagliptin,40239216,7,
+arformoterol,1111220,7,
+fusidate,19010400,7,
+fluciclovine,702009,7,
+vitamin K,19010128,7,
+tafamidis,45774701,7,
+avibactam,46221507,7,
+nitric oxide,19020068,7,
+HCTZ / valsartan Oral,40045128,7,
+ravulizumab,1356009,7,
+cefixime,1796435,7,
+lymecycline,19092353,7,
+tirzepatide,779705,7,
+nabumetone,1113648,6,
+cefmetazole,19072255,6,
+chloramphenicol,990069,6,
+guaifenesin,1163944,6,
+hexyl 5-aminolevulinate,43532423,6,
+iodixanol,19003201,6,
+folate,1387426,6,
+pramipexole,720810,6,
+phloroglucinol,19041222,6,
+milrinone,1368671,6,
+rofecoxib,1189754,6,
+acetylcarnitine,19037596,6,
+imipenem,1778262,6,
+strontium chloride,19100414,6,
+terbinafine,1741309,6,
+interferon gamma-1a,42903737,6,
+etonogestrel,1519936,6,
+norelgestromin,1518198,6,
+polymyxin B,948582,6,
+BCG,19023835,6,
+varenicline,780442,6,
+oseltamivir,1799139,6,
+liraglutide,40170911,6,
+lurasidone,40230761,6,
+cefdinir,1796458,6,
+eplerenone,1309799,6,
+insulin,1596977,6,
+potassium iodide,19049909,6,
+dulaglutide,45774435,6,
+ampicillin,1717327,6,
+chorionic gonadotropin,1563600,6,
+strontium,19000815,6,
+flunitrazepam,19055224,6,
+ticlopidine,1302398,6,
+riluzole,735951,6,
+linaclotide,42900505,6,
+dextroamphetamine,719311,6,
+magnesium salicylate,1168079,6,
+trospium,991825,6,
+tetracycline,1836948,6,
+aztreonam,1715117,6,
+saquinavir,1746244,6,
+mefloquine,19000498,6,
+amisulpride,19057607,6,
+calcium citrate,19058572,6,
+6-aminocaproic acid,1369939,6,
+muromonab-CD3,19051865,6,
+HCTZ / losartan Oral,40044821,6,
+adefovir,1729323,6,
+nadroparin,19001014,6,
+colistin,901845,6,
+phosphoric acid,943030,6,
+omega-3 fatty acids,19106973,6,
+ozanimod,37499437,6,
+calcium lactobionate,19090802,6,
+fenbendazole,40167608,6,
+upadacitinib,1361580,6,
+SARS-CoV-2 (COVID-19) vaccine,37003432,6,
+istradefylline,37496558,6,
+parecoxib,19003570,6,
+acebutolol,1319998,6,
+cariprazine,35603277,6,
+remdesivir,37499271,6,
+rifabutin,1777417,6,
+methylsulfonylmethane,1389780,6,
+suramin,19136651,6,
+bromhexine,19030493,5,
+vitamin K2,19106287,5,
+misoprostol,1150871,5,
+flecainide,1354860,5,
+telaprevir,40239330,5,
+etretinate,19050554,5,
+alclometasone,905151,5,
+nandrolone,1514412,5,
+lovastatin,1592085,5,
+teprotumumab,37498633,5,
+levomethadone,19056706,5,
+imipramine,778268,5,
+desvenlafaxine,717607,5,
+vitamin A,19008339,5,
+cobicistat,42874220,5,
+benazepril,1335471,5,
+latanoprost,954688,5,
+tolterodine,913782,5,
+lysine,19092377,5,
+doxepin,738156,5,
+captopril,1340128,5,
+tetraxetan,37497534,5,
+bazedoxifene,44506794,5,
+estazolam,748010,5,
+glutamine,19060985,5,
+bosentan,1321636,5,
+vitamin B complex,19010970,5,
+selenium,966282,5,
+riociguat,44506752,5,
+orgotein,19082874,5,
+neomycin,915981,5,
+elbasvir,35606465,5,
+metolazone,907013,5,
+deoxycholate,19052896,5,
+patiromer,35602991,5,
+perflutren,19071160,5,
+ferumoxytol,40163731,5,
+bisacodyl,924939,5,
+bumetanide,932745,5,
+gadopentetate dimeglumine,19097468,5,
+tropatepine,19101712,5,
+mexiletine,1307542,5,
+lormetazepam,19007977,5,
+flavoxate,954853,5,
+crisaborole,1593397,5,
+stearate,43014216,5,
+pramoxine,927478,5,
+perampanel,42904177,5,
+brivudine,19122130,5,
+belimumab,40236987,5,
+bromazepam,19030353,5,
+rilmenidine,19115050,5,
+chloropyramine,19049437,5,
+abaloparatide,1594148,5,
+levomefolate,45775208,5,
+fish oil (containing omega-3 acids),35200165,5,
+felodipine,1353776,5,
+erenumab,1510467,5,
+edrecolomab,19132294,5,
+timolol,902427,5,
+HCTZ / irbesartan Oral,40045119,5,
+tyrosine,19006692,5,
+fidaxomicin,40239985,5,
+buprenorphine / naloxone Buccal Film,45776270,5,
+salmeterol,1137529,5,
+cenobamate,37497998,5,
+methyldopa,1305447,5,
+sotrovimab,1536976,5,
+pyrvinium,19031165,5,
+econazole,940864,5,
+carbimazole,19040606,4,
+lycopene,1308185,4,
+dopamine,1337860,4,
+interleukin-1 alpha,1361064,4,
+bepotastine,40166571,4,
+mianserin,19007737,4,
+tea leaf oil,42900230,4,
+dornase alfa,1125443,4,
+isosorbide dinitrate,1383925,4,
+dobutamine,1337720,4,
+histamine,19069019,4,
+epinephrine / lidocaine Rectal Spray,779680,4,
+procaine,751698,4,
+omega-3 acid ethyl esters (USP),1560305,4,
+mecobalamin,19009025,4,
+biotin,19024770,4,
+metyrosine,1401581,4,
+meglumine,19125279,4,
+metopimazine,19072087,4,
+trenbolone,44784980,4,
+sulpiride,19136626,4,
+epidermal growth factor,43532347,4,
+benzonatate,1136601,4,
+atazanavir,1727223,4,
+calcium chloride,19036781,4,
+rivastigmine,733523,4,
+amoxapine,713109,4,
+glucosamine,1360332,4,
+eprazinone,19095266,4,
+magnesium hydroxide,992956,4,
+factor VIIa,1352141,4,
+benztropine,719174,4,
+clomipramine,798834,4,
+tulobuterol,19043191,4,
+propiverine,19077093,4,
+creatine,19071967,4,
+calcifediol,19035569,4,
+cefoperazone,1773402,4,
+fluocinolone,996541,4,
+polyethylene glycols,948515,4,
+adenosine triphosphate,19015230,4,
+lopinavir / ritonavir Oral,40128015,4,
+pyrazinamide,1759455,4,
+povidone-iodine,1750087,4,
+oprelvekin,1318030,4,
+desoximetasone,917336,4,
+docosanol,980955,4,
+dicyclomine,924724,4,
+artemisinin,1145680,4,
+silver,1525348,4,
+titanium,42900100,4,
+ivabradine,46234437,4,
+cholestyramine resin,19095309,4,
+etelcalcetide,1593331,4,
+etidronate,1552929,4,
+iomeprol,1525340,4,
+selexipag,35604848,4,
+fluoxymesterone,1555887,4,
+pantethine,19019317,4,
+copper gluconate,19004810,4,
+quinine,1760616,4,
+fluocinonide,955252,4,
+sinecatechins,921956,4,
+apomorphine,837027,4,
+tocopherol,42709318,4,
+ferrous gluconate,1396012,4,
+benralizumab,792993,4,
+atropine / diphenoxylate Oral,40010968,4,
+gold,42899196,4,
+vortioxetine,44507700,4,
+glyceryl phosphate,43526717,4,
+amp / sul Inj,46275615,4,
+diflucortolone,19026096,4,
+opicapone,1145467,4,
+diphenoxylate,930916,4,
+galcanezumab,35200800,4,
+belatacept,40239665,4,
+daratumumab / hyaluronidase Inj,1146177,4,
+sacubitril,46275719,4,
+lanadelumab,35200405,4,
+bedaquiline,43012518,4,
+benzocaine,917006,4,
+mosapride,19011339,4,
+glycopyrronium / indacaterol Inhalation Powder,1356196,4,
+sacubitril / valsartan Oral,46275724,4,
+tirbanibulin,37003531,4,
+voxelotor,37497986,4,
+orlistat,741530,4,
+selenious acid,19038024,4,
+prilocaine,951279,3,
+paraffin,19129738,3,
+cefotiam,19051271,3,
+thymopentin,19102231,3,
+activated charcoal,1701928,3,
+hemp,35604402,3,
+nomegestrol,19015533,3,
+tadenan,941004,3,
+acetic acid,929549,3,
+stanozolol,1636145,3,
+mustard oil,43012161,3,
+thiopental,700253,3,
+guanfacine,1344965,3,
+polyoxyl 35 castor oil,42900419,3,
+fluticasone / vilanterol Dry Powder Inhaler,43532281,3,
+efalizumab,936429,3,
+meprednisone,19009116,3,
+armodafinil,19090984,3,
+antilymphocyte immunoglobulin,19136041,3,
+anti-inhibitor coagulant complex,19080406,3,
+sulfasalazine,964339,3,
+aminophylline,1105775,3,
+chlorthalidone,1395058,3,
+sotalol,1370109,3,
+cloperastine,35201862,3,
+bacitracin,915175,3,
+cantharidin,19039679,3,
+thioridazine,700299,3,
+quercetin,19060393,3,
+vardenafil,1311276,3,
+entacapone,782211,3,
+niacin,1517824,3,
+tetrazepam,19041746,3,
+mefenamate,1197736,3,
+glycerol phenylbutyrate,46274595,3,
+benzoyl peroxide,918172,3,
+phenylbutyrate,1539954,3,
+pristinamycin,19125201,3,
+HCTZ / lisinopril Oral,40044817,3,
+calcium polycarbophil,940426,3,
+altrenogest,42903898,3,
+alibendol,19055880,3,
+lifitegrast,40220740,3,
+zinc gluconate,19079204,3,
+natalizumab,735843,3,
+loxapine,792263,3,
+quinapril,1331235,3,
+carbenicillin,1740546,3,
+nabilone,913440,3,
+thymalfasin,19100740,3,
+dexamethasone / tobramycin Ophthalmic Suspension,40027458,3,
+mecasermin,1502877,3,
+ifenprodil,19069103,3,
+tesamorelin,40231628,3,
+tranylcypromine,703470,3,
+cod liver oil,19101604,3,
+icatibant,40242044,3,
+ledipasvir / sofosbuvir Oral,45775026,3,
+insulin isophane,46221581,3,
+aspirin / carisoprodol Oral,40012296,3,
+bezafibrate,19022956,3,
+procaterol,19028950,3,
+coxsackievirus A21,1759061,3,
+pyroglutamate,19018255,3,
+hyoscyamine,923672,3,
+endothelial growth factor A,746222,3,
+norgestrel,1521592,3,
+clenbuterol,19097824,3,
+methoxyflurane,19005257,3,
+emicizumab,793042,3,
+sofosbuvir / velpatasvir Oral Pellet,702125,3,
+nalbuphine,1114122,3,
+terbutaline,1236744,3,
+lonafarnib,37003374,3,
+brimonidine,915542,3,
+carisoprodol,749910,3,
+proparacaine,929504,3,
+fluvastatin,1549686,3,
+oxymetazoline,925636,3,
+ganirelix,1536743,3,
+semaglutide,793143,3,
+bictegravir,964008,3,
+eptifibatide,1322199,3,
+tiopronin,903031,3,
+crizanlizumab,37497670,3,
+tiropramide,19100759,3,
+nitrazepam,19020021,3,
+cyamemazine,19051234,3,
+anidulafungin,19026450,3,
+empagliflozin,45774751,3,
+epoprostenol,1354118,3,
+lonapegsomatropin,701794,3,
+danaparoid,19026343,3,
+satraplatin,35606078,3,
+proguanil,1792429,2,
+glyburide,1559684,2,
+trichlormethiazide,904639,2,
+pyrimethamine,1760039,2,
+magnesium sulfate heptahydrate,19091804,2,
+clobetasone,19005129,2,
+procyclidine,752276,2,
+urapidil,19101849,2,
+lithium carbonate,751246,2,
+flumazenil,19055153,2,
+difluprednate,19089579,2,
+chlorprothixene,19095002,2,
+roxithromycin,19063874,2,
+glipizide,1560171,2,
+etomidate,19050488,2,
+"sodium phosphate, monobasic",990499,2,
+cilastatin,1797258,2,
+propylthiouracil,1554072,2,
+levalbuterol,1192218,2,
+sulbenicillin,19000817,2,
+miltefosine,44816310,2,
+zileuton,1147878,2,
+trientine,19004969,2,
+zinc chloride,19044317,2,
+hydrogen peroxide,1776430,2,
+nizatidine,950696,2,
+polysaccharide iron complex,1300751,2,
+bromopride,19018980,2,
+ginger root,1314928,2,
+streptomycin,1836191,2,
+betaxolol,1322081,2,
+methyltestosterone,1506602,2,
+miglustat,19045272,2,
+barium sulfate,19011331,2,
+vildagliptin,19122137,2,
+vitamin K1,19044727,2,
+atovaquone / proguanil Oral,40095250,2,
+prasugrel,40163718,2,
+fosfestrol,19065450,2,
+midodrine,1308368,2,
+mivacurium,19010459,2,
+zafirlukast,1111706,2,
+cefditoren,1747005,2,
+cetrorelix,1503983,2,
+methoxamine,19005208,2,
+copper,19071128,2,
+lamivudine / zidovudine Oral,40051161,2,
+insulin degludec,35602717,2,
+pimecrolimus,915935,2,
+cobamamide,19048026,2,
+buspirone,733301,2,
+opipramol,19129635,2,
+mequitazine,19009145,2,
+sapropterin,19021959,2,
+quinidine,1360421,2,
+diphenidol,19089992,2,
+hydroxyethyl starch 130-0.4,43012293,2,
+loteprednol etabonate,967562,2,
+iron-dextran complex,1381661,2,
+agatolimod,746684,2,
+biperiden,724908,2,
+butalbital,1139699,2,
+antithrombin III,1436169,2,
+ixekizumab,35603563,2,
+oxacillin,1724703,2,
+nitazoxanide,1715315,2,
+tenecteplase,19098548,2,
+oxaprozin,1118045,2,
+chlorzoxazone,795113,2,
+agalsidase beta,1525746,2,
+arsenic triiodide,42900399,2,
+insulin-like growth factor 2,35604829,2,
+interferon-beta,19109079,2,
+nimodipine,1319133,2,
+adenosine,1309204,2,
+pentetate,19123729,2,
+methyl salicylate,909440,2,
+icosapent ethyl,42874246,2,
+risedronic acid,19115051,2,
+barium,42898624,2,
+Streptococcus pneumoniae serotype 6A capsular antigen diphtheria CRM197 protein conjugate vaccine,40174020,2,
+glecaprevir,793843,2,
+levorphanol,1189766,2,
+canrenone,19019698,2,
+chlorotrianisene,19092684,2,
+cefaclor,1768849,2,
+methylnaltrexone,909841,2,
+voxilaprevir,793741,2,
+milnacipran,19080226,2,
+betamethasone / salicylic acid Topical Ointment,40018158,2,
+folic acid / vitamin B12 Disintegrating Oral,40148860,2,
+sodium ferric gluconate complex,1399177,2,
+potassium citrate,976545,2,
+nafarelin,1507558,2,
+Viscum album leaf extract,42900022,2,
+sulbactam,1836241,2,
+canagliflozin,43526465,2,
+sulfur,1036525,2,
+rasagiline,715710,2,
+rose bengal,19063871,2,
+metreleptin,44814585,2,
+cefadroxil,1769535,2,
+limonene,19071864,2,
+dolasetron,903459,2,
+prucalopride,1356018,2,
+oxymetholone,1525741,2,
+genistein,19097682,2,
+L1 protein,45892476,2,
+indole-3-carbinol,779328,2,
+ethamsylate,19049350,2,
+psyllium,957797,2,
+prasterone,1312007,2,
+capsaicin,939881,2,
+methionine,19004724,2,
+ethosuximide,750119,2,
+dextromoramide,19021940,2,
+insulin detemir,1516976,2,
+gliclazide,19059796,2,
+siponimod,1510913,2,
+sumatriptan,1140643,2,
+azelate,986790,2,
+dorzolamide,981709,2,
+lisdexamfetamine,709567,2,
+aminosalicylic acid,1726228,2,
+nitrendipine,19020061,2,
+colestipol,1501617,2,
+wormwood oil,42899969,2,
+mebeverine,19008994,2,
+drospirenone,1512674,2,
+lutropin alfa,1543112,2,
+glecaprevir / pibrentasvir Oral,793862,2,
+tinidazole,1702559,2,
+faricimab,1759013,2,
+amlodipine / valsartan Oral,40140541,2,
+budesonide / formoterol Metered Dose Inhaler,40142910,2,
+dabigatran,45775372,2,
+elvitegravir,42874212,2,
+aldioxa,19054915,2,
+sodium zirconium cyclosilicate,1510687,2,
+eliglustat,45775782,2,
+guselkumab,1593700,2,
+iloprost,1344992,2,
+burosumab,1510235,2,
+inotersen,35200990,2,
+simethicone,966991,2,
+sodium hydroxide,19069760,2,
+olodaterol,45775116,2,
+benzbromarone,19016754,2,
+rufinamide,19006586,2,
+hydroquinone,976778,2,
+racecadotril,19018403,2,
+gadoteridol,19097463,2,
+hydantoin,35605297,2,
+zinc sulfate,19044522,2,
+albendazole,1753745,2,
+anifrolumab,701470,2,
+thrombin,1300673,2,
+oxytocin,1326115,2,
+mineral oil,908523,2,
+pseudoephedrine,1154332,2,
+ceftizoxime,1777254,2,
+butorphanol,1133732,2,
+phenol,923540,2,
+bifonazole,19037560,2,
+flucytosine,1755112,2,
+aspirin / glycine Oral,40012578,2,
+reslizumab,35603983,2,
+omadacycline,35200953,2,
+dorzolamide / timolol Ophthalmic Solution,40057968,2,
+potassium acetate,19076414,2,
+flurandrenolide,956266,2,
+lusutrombopag,35200302,2,
+crofelemer,43013047,2,
+sodium,19136048,2,
+cabotegravir,739588,2,
+edaravone,1594308,2,
+ertugliflozin,793293,2,
+inosine pranobex,19083285,2,
+emapalumab,1355650,2,
+aprindine,19006969,2,
+lemborexant,37498491,2,
+Coix lacryma-jobi var. ma-yuen seed oil,45776223,2,
+doripenem,1713905,2,
+arbekacin,19101402,2,
+somatrem,1578181,2,
+benoxinate,935529,2,
+lactitol,19071236,2,
+vinpocetine,19095462,2,
+canrenoate,19123864,1,
+ichthammol,977949,1,
+aluminum,42898412,1,
+hydroxytyrosol,42903724,1,
+distigmine,19035856,1,
+ospemifene,43525773,1,
+dihydroergotamine,1126557,1,
+saxagliptin,40166035,1,
+enfuvirtide,1717002,1,
+tacalcitol,19008361,1,
+guaiazulene,19068893,1,
+beta sitosterol,19112540,1,
+Saccharomyces boulardii,991855,1,
+chloroxylenol,949459,1,
+aprotinin,19000729,1,
+bismuth tribromophenate,19058100,1,
+dromostanolone,19056571,1,
+miglitol,1510202,1,
+creatinine,19071968,1,
+chondroitin sulfates / glucosamine Oral,40131393,1,
+alfentanil,19059528,1,
+brincidofovir,779496,1,
+maltose,42899344,1,
+indinavir,1711523,1,
+chymotrypsin,19096710,1,
+inositol,1379525,1,
+ioxaglate,19081316,1,
+amygdalin,43525788,1,
+ioflupane,702004,1,
+paregoric,922024,1,
+glycine,962398,1,
+citrulline,19097664,1,
+sparfloxacin,1733765,1,
+tranilast,19120306,1,
+beclamide,19018520,1,
+stannous fluoride,1036094,1,
+aluminum silicate,43012256,1,
+desflurane,19002770,1,
+pilocarpine,945286,1,
+cycloserine,1710446,1,
+malate,19126516,1,
+selenite,19066274,1,
+acarbose,1529331,1,
+fosphenytoin,713192,1,
+pantothenate,19088079,1,
+riboflavin,19062817,1,
+ozone,37499487,1,
+phosphorus,19043395,1,
+aluminum hydroxide,985247,1,
+oxiracetam,19082891,1,
+imidapril,19122327,1,
+mafenide,992716,1,
+silicon dioxide,19066865,1,
+chromium,19061821,1,
+argatroban,1322207,1,
+dichloroacetate,19024246,1,
+galsulfase,19078649,1,
+magnesium carbonate,908464,1,
+carglumic acid,19102150,1,
+coconut oil,42898952,1,
+starch / zinc oxide Topical Powder,40230153,1,
+salsalate,1137460,1,
+piroxicam,1146810,1,
+diflunisal,1126128,1,
+amonafide,44506774,1,
+boron,19029824,1,
+amylase / lipase / protease Oral Powder,40104996,1,
+nafcillin,1713930,1,
+cephalothin,19086759,1,
+rinfabate,43532160,1,
+potassium phosphate,19027362,1,
+escin,19048012,1,
+carbachol,940183,1,
+citicoline,40223464,1,
+probenecid,1151422,1,
+carbamide peroxide,958999,1,
+amox / clav Oral,40131077,1,
+oxytetracycline,925952,1,
+ethacridine,19103483,1,
+secobarbital,766067,1,
+evening primrose oil,19045290,1,
+ambenonium,787362,1,
+dasabuvir / ombitasvir / paritaprevir / ritonavir ER Oral,40220795,1,
+interleukin-10,42900473,1,
+poractant alfa,19091377,1,
+zolmitriptan,1116031,1,
+becaplermin,912476,1,
+pyrethrins,959665,1,
+tolperisone,19003296,1,
+aspartic acid,19012686,1,
+papain,926770,1,
+ethinyl estradiol / norethindrone Oral,43526711,1,
+serotonin,42899779,1,
+caffeine / propyphenazone Rectal Suppository,40017332,1,
+sodium sulfate,939976,1,
+HCTZ / triamterene Oral,40045116,1,
+piracetam,19046654,1,
+safinamide,1594333,1,
+lactoferrin,43531995,1,
+mephobarbital,702685,1,
+arachidonate,43014003,1,
+enobosarm,790012,1,
+17-alpha-hydroxyprogesterone,19077143,1,
+cesium chloride,19049175,1,
+benazepril / HCTZ Oral,40096153,1,
+iodoquinol,928006,1,
+influenza A virus (H3N2) antigen,46275996,1,
+aloe extract,960900,1,
+sulfacetamide,1036252,1,
+peginterferon beta-1a,45775146,1,
+parnaparin,19008276,1,
+dronedarone,40163615,1,
+oregano oil,19126395,1,
+methylephedrine,35604767,1,
+ropinirole,713823,1,
+cetylpyridinium,989301,1,
+selegiline,766209,1,
+helium,19067073,1,
+cefoxitin,1775741,1,
+vilazodone,40234834,1,
+methazolamide,904250,1,
+ethylmorphine,19050414,1,
+amphotericin,952045,1,
+trimetrexate,1750928,1,
+pipamperone,19093225,1,
+follitropin beta,1597235,1,
+betahistine,19020124,1,
+butobarbital,19039767,1,
+cenegermin,1355548,1,
+acetaminophen / butalbital Oral,40004033,1,
+shark liver oil,961304,1,
+olive oil,42900448,1,
+tuberculin,19010871,1,
+meclizine,994341,1,
+bromfenac,1139179,1,
+levomilnacipran,43560354,1,
+ebastine,19092433,1,
+romosozumab,1511251,1,
+insulin aspart,1567198,1,
+prazepam,19050461,1,
+fosinopril,1363749,1,
+glutamate,911486,1,
+certoparin,19016072,1,
+diosmin / hesperidin Oral,40031530,1,
+fluorescein,996625,1,
+trimetazidine,19005626,1,
+cystine,19011082,1,
+mitobronitol,19125635,1,
+quazepam,731188,1,
+lincomycin,1790692,1,
+tirofiban,19017067,1,
+grape seed extract,1392182,1,
+polystyrene sulfonate,45775570,1,
+calcium levulinate,19058971,1,
+licorice,1353048,1,
+icodextrin,19011437,1,
+benzalkonium,916460,1,
+codeine / promethazine Oral,40029854,1,
+stiripentol,35200286,1,
+methylcellulose,905371,1,
+tetrahydrozoline,941577,1,
+tasimelteon,44814600,1,
+rizatriptan,1154077,1,
+calcium bicarbonate,43526455,1,
+streptokinase,19136187,1,
+hypochlorite,44784806,1,
+manganese chloride,19008893,1,
+selenium sulfide,938061,1,
+hydrogen,19076389,1,
+arsenate,43526097,1,
+fosfomycin,956653,1,
+acetaminophen / butalbital / caffeine Oral,40004012,1,
+etilefrine,19050419,1,
+glycolate,911638,1,
+ethinyl estradiol / norgestimate Oral,40039807,1,
+lipase,990760,1,
+doxylamine,738818,1,
+adenine,19071966,1,
+chlordiazepoxide,990678,1,
+cevimeline,954819,1,
+silymarin,19066992,1,
+trimethobenzamide,942799,1,
+triazolam,704599,1,
+tasonermin,19071159,1,
+hyaluronidase / pertuzumab / trastuzumab Inj,1146566,1,
+palladium,42900467,1,
+amiloride,991382,1,
+interferon alfa-n3,1385645,1,
+gadobenate,19007652,1,
+manidipine,19071995,1,
+tetracaine,1036884,1,
+tyrothricin,19006842,1,
+hydrotalcite,19002230,1,
+ethinyl estradiol / gestodene Oral,40039760,1,
+tolnaftate,902950,1,
+sulfamethoxypyridazine,19000820,1,
+patisiran,35200163,1,
+disopyramide,1335606,1,
+Hypericum oil,42904117,1,
+dimethyl sulfoxide,928980,1,
+menthol / zinc oxide Topical Powder,40126740,1,
+pumpkin seed oil,19112533,1,
+zeolite A,37498881,1,
+sulfametrole / trimethoprim Oral,40101830,1,
+motixafortide,746567,1,
+flunarizine,19055183,1,
+eletriptan,1189697,1,
+clorazepate,790253,1,
+royal jelly,19036638,1,
+berberine,19012197,1,
+niclosamide,19018416,1,
+brodalumab,1592513,1,
+drospirenone / ethinyl estradiol Oral,40057995,1,
+dexamethasone / neomycin Topical Spray,40027449,1,
+sage oil,42899733,1,
+tianeptine,19041910,1,
+diosmin,19029488,1,
+bebtelovimab,1759073,1,
+abarelix,19010868,1,
+levothyroxine / liothyronine Oral,40086668,1,
+moxonidine,19011021,1,
+givosiran,37498020,1,
+collagen,19069049,1,
+zinc pyrithione,944360,1,
+metaxalone,780369,1,
+tralokinumab,1758687,1,
+clofazimine,1798476,1,
+paromomycin,1727443,1,
+penicillin G,1728416,1,
+varicella zoster virus glycoprotein E,792777,1,
+oil of garlic,42899536,1,
+belantamab,37002429,1,
+flavin-adenine dinucleotide,42903868,1,
+mestranol,1503184,1,
+diethylcarbamazine,19025698,1,
+morniflumate,19072152,1,
+rilpivirine,40238930,1,
+elosulfase alfa,44814525,1,
+fluphenazine,756018,1,
+propoxyphene,1153664,1,
+primaquine,1751310,1,
+magnesium lactate,19051926,1,
+avacopan,702027,1,
+inclisiran,1758562,1,
+acrivastine,1140123,1,
+iodamide,19080542,1,
+aspirin / dipyridamole Oral,40012575,1,
+mavacamten,779591,1,
+fomepizole,19022479,1,
+diamond,43012191,1,
+ioversol,19069131,1,
+abrocitinib,1758974,1,
+calcium fluoride,19018601,1,
+lornoxicam,19049709,1,
+voclosporin,739590,1,
+deutetrabenazine,1593670,1,
+spiramycin,19070251,1,
+efgartigimod alfa,702468,1,
+iobitridol,19053540,1,
+levulinate,42904214,1,
+polyvinyl alcohol / povidone Ophthalmic Solution,40073755,1,
+estradiol / norethindrone Transdermal System,40221101,1,
+trihexyphenidyl,705178,1,
+bemiparin,19069137,1,
+doravirine,35200446,1,
+cobicistat / darunavir Oral,45892973,1,
+Streptococcus pneumoniae serotype 4 capsular antigen diphtheria CRM197 protein conjugate vaccine,529044,1,
+dezocine,19088393,1,
+bambuterol,19034275,1,
+vibegron,739438,1,
+omidubicel,1201206,1,
+tibolone,19041933,1,
+chloroacetate,19059552,1,
+idarucizumab,35602981,1,
+halobetasol,949759,1,
+titanium dioxide / zinc oxide Topical Cream,40098782,1,
+Coix lacryma-jobi seed extract,42898902,1,
+pafolacianine,702393,1,
+inebilizumab,1146077,1,
+isoflurane,782043,1,
+betamethasone / clotrimazole Topical Ointment,40018135,1,
+thyroglobulin,19000732,1,
+acetaminophen / ibuprofen Oral,40002729,1,
+betamethasone / fusidate Topical Lotion,40131263,1,
+phentermine,735340,1,
+nicorandil,19014977,1,
+oxatomide,19071314,1,
+crotamiton,969276,1,
+amylocaine,19048016,1,
+indigo,43532336,1,
+glucagon,1560278,1,
+pemoline,727835,1,
+Bifidobacterium bifidum,19006764,1,
+ciclesonide,902938,1,
+methotrimeprazine,19005147,1,
+methenamine,904356,1,
+maprotiline,794147,1,
+methyl 5-aminolevulinate,19025194,1,
+potassium aspartate,19049059,1,
+troxerutin,19043154,1,
+temoporfin,19011067,1,
+flupirtine,19064698,1,
+chondroitin sulfate (chicken),43525774,1,
+calcium sulfate,19037446,1,
+formaldehyde,1756524,1,
+balsalazide,934262,1,
+bencyclane,19016320,1,
+alpha hydroxy acids / urea Topical Cream,43532594,1,
+Plantago seed,19132965,1,
+thimerosal,19137377,1,
+hydrocodone / ibuprofen Oral,40045770,1,
+mepivacaine,702774,1,
+kanamycin,1784749,1,
+imidazole,739489,1,
+choline,1195334,1,
+erdosteine,19058933,1,
+alginic acid / aluminum hydroxide / magnesium carbonate Oral,40133592,1,
+aminoglutethimide,1503057,1,
+oxybate,37002370,1,
+glucose / sodium chloride Inj,40044592,1,
+indican,37003227,1,
+desogestrel,1588000,1,
+trandolapril,1342439,1,
+gadopentetate,45775566,1,
+fluorine,42899013,1,
+podophyllin,947651,1,
+phenelzine,733896,1,
+darifenacin,916230,1,
+Trichophyton antigen,19057718,1,
+ticarcillin,1702364,1,
+sulfadiazine,1836391,1,

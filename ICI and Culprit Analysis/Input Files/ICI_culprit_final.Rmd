@@ -1,0 +1,3649 @@
+---
+title: "ICI_culprit_master"
+author: "Eric Mukherjee"
+date: "2025-06-13"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# INTRODUCTION
+
+This is a unified document to generate the figures for Manuscript 2 -
+ICI-culprit interactions. It will be organized by figure.
+
+## Libraries
+
+```{r}
+# 📦 Data manipulation and wrangling
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(readr)
+
+# 📊 Statistical modeling and regression tools
+library(stats)
+library(broom)
+library(car)
+library(survival)
+library(survminer)
+
+# 📈 Visualization
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(scales)
+library(RColorBrewer)
+library(ggpp)
+library(gridExtra)
+
+# 📋 Tables and formatting
+library(gt)
+library(glue)
+library(gsubfn)
+
+# 🌍 Metadata and classification
+library(countrycode)
+library(reshape2)  # Used for reshaping data (wide ↔ long)
+```
+
+## Useful functions
+
+### Create logit summary table
+
+Create a summary table of any logistic regression for publication by
+using this function. We choose to create Wald-based confidence
+intervals, derived from the standard errors of the model coefficients,
+rather that using profile-likelihood-based CIs (which take a while)
+
+```{r}
+# This function creates a summary table for logistic regression
+# It includes the option for bootstrap confidence intervals and p-values
+logit_summary_table <- function(model, data, label_map = NULL) {
+  coef_table <- summary(model)$coefficients
+  or_table <- exp(cbind(OR = coef(model), confint.default(model)))
+  pvals <- coef_table[, 4]
+
+  result_rows <- list()
+
+  predictors <- attr(terms(model), "term.labels")
+  response <- all.vars(formula(model))[1]
+
+  for (term in predictors) {
+    if (!(term %in% names(data))) next
+    var <- data[[term]]
+    display_term <- if (!is.null(label_map) && term %in% names(label_map)) label_map[[term]] else term
+
+    # Binary 0/1 or logical
+    if (length(unique(na.omit(var))) == 2 && (is.numeric(var) || is.logical(var))) {
+      var <- factor(as.integer(var), levels = c(0, 1))
+      counts <- table(var)
+      sjsten_counts <- table(var[data[[response]] == 1])
+
+      result_rows[[length(result_rows) + 1]] <- data.frame(
+        Variable = display_term,
+        Level = "0 (ref)",
+        N = counts["0"],
+        SJS_TEN_Cases = sjsten_counts["0"],
+        OR = 1,
+        CI = "-",
+        P = "-",
+        stringsAsFactors = FALSE
+      )
+
+      coef_name <- paste0(term, "1")
+      i <- grep(paste0("^", coef_name, "$"), rownames(coef_table), fixed = TRUE)
+      if (length(i) > 0) {
+        or <- round(or_table[i, 1], 2)
+        ci <- sprintf("[%.2f–%.2f]", or_table[i, 2], or_table[i, 3])
+        p <- signif(pvals[i], 3)
+        if (p < 0.001) p <- "<0.001"
+
+        result_rows[[length(result_rows) + 1]] <- data.frame(
+          Variable = display_term,
+          Level = "1",
+          N = counts["1"],
+          SJS_TEN_Cases = sjsten_counts["1"],
+          OR = or,
+          CI = ci,
+          P = p,
+          stringsAsFactors = FALSE
+        )
+      }
+
+    # Multilevel factor
+    } else if (is.factor(var)) {
+      levels_var <- levels(var)
+      base <- levels_var[1]
+      counts <- table(var)
+      sjsten_counts <- table(var[data[[response]] == 1])
+
+      result_rows[[length(result_rows) + 1]] <- data.frame(
+        Variable = display_term,
+        Level = paste0(base, " (ref)"),
+        N = counts[base],
+        SJS_TEN_Cases = sjsten_counts[base],
+        OR = 1,
+        CI = "-",
+        P = "-",
+        stringsAsFactors = FALSE
+      )
+
+      for (lvl in levels_var[-1]) {
+        coef_name <- paste0(term, lvl)
+        i <- grep(coef_name, rownames(coef_table), fixed = TRUE)
+        if (length(i) == 0) next
+        or <- round(or_table[i, 1], 2)
+        ci <- sprintf("[%.2f–%.2f]", or_table[i, 2], or_table[i, 3])
+        p <- signif(pvals[i], 3)
+        if (p < 0.001) p <- "<0.001"
+
+        result_rows[[length(result_rows) + 1]] <- data.frame(
+          Variable = display_term,
+          Level = lvl,
+          N = counts[lvl],
+          SJS_TEN_Cases = sjsten_counts[lvl],
+          OR = or,
+          CI = ci,
+          P = p,
+          stringsAsFactors = FALSE
+        )
+      }
+
+    # Continuous numeric
+    } else if (is.numeric(var)) {
+      i <- grep(paste0("^", term, "$"), rownames(coef_table))
+      if (length(i) == 0) next
+      or <- round(or_table[i, 1], 2)
+      ci <- sprintf("[%.2f–%.2f]", or_table[i, 2], or_table[i, 3])
+      p <- signif(pvals[i], 3)
+      if (p < 0.001) p <- "<0.001"
+
+      result_rows[[length(result_rows) + 1]] <- data.frame(
+        Variable = display_term,
+        Level = "Per Unit Increase",
+        N = nrow(data),
+        SJS_TEN_Cases = sum(data[[response]] == 1, na.rm = TRUE),
+        OR = or,
+        CI = ci,
+        P = p,
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  result_df <- do.call(rbind, result_rows)
+  rownames(result_df) <- NULL
+  return(result_df)
+}
+```
+
+### Change CIs to scientific notation if they have too many digits
+
+```{r}
+# Helper function to format each number in CI strings
+format_ci <- function(ci_string) {
+  nums <- str_extract_all(ci_string, "\\d+\\.?\\d*")[[1]]
+  formatted <- map_chr(nums, ~ {
+    x <- as.numeric(.x)
+    if (!is.na(x) && x > 999) formatC(x, format = "e", digits = 2) else formatC(x, format = "f", digits = 2)
+  })
+  str_replace(ci_string, "\\[.*\\]", paste0("[", paste(formatted, collapse = "-"), "]"))
+}
+```
+
+### Create summary table for survival models
+
+Similarly, this function creates summary tables for Cox survival models,
+using the model outputs directly.
+
+```{r}
+# This function creates a summary table for Cox models
+cox_summary_table <- function(model, data) {
+  # Extract model info
+  coef_table <- summary(model)$coefficients
+  ci_table <- summary(model)$conf.int
+  pvals <- coef_table[, "Pr(>|z|)"]
+
+  predictors <- attr(terms(model), "term.labels")
+  result_rows <- list()
+
+  for (term in predictors) {
+    var <- data[[term]]
+
+    if (is.factor(var)) {
+      levels_var <- levels(var)
+      base <- levels_var[1]
+      counts <- table(var)
+
+      result_rows[[length(result_rows) + 1]] <- data.frame(
+        Variable = term,
+        Level = paste0(base, " (ref)"),
+        N = as.character(counts[base]),
+        HR = 1,
+        CI = "-",
+        P = "-",
+        stringsAsFactors = FALSE
+      )
+
+      for (lvl in levels_var[-1]) {
+        term_name <- paste0(term, lvl)
+        i <- grep(term_name, rownames(coef_table), fixed = TRUE)
+        if (length(i) == 0) next
+
+        or <- round(ci_table[i, "exp(coef)"], 2)
+        ci <- sprintf("[%.2f-%.2f]", ci_table[i, "lower .95"], ci_table[i, "upper .95"])
+        p <- signif(pvals[i], 3)
+        if (!is.na(p) && p < 0.001) p <- "<0.001"
+
+        result_rows[[length(result_rows) + 1]] <- data.frame(
+          Variable = term,
+          Level = lvl,
+          N = as.character(counts[lvl]),
+          HR = or,
+          CI = ci,
+          P = ifelse(is.na(p), "-", as.character(p)),
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+
+    else if (is.numeric(var)) {
+      i <- which(rownames(coef_table) == term)
+      if (length(i) == 0) next
+
+      or <- round(ci_table[i, "exp(coef)"], 2)
+      ci <- sprintf("[%.2f-%.2f]", ci_table[i, "lower .95"], ci_table[i, "upper .95"])
+      p <- signif(pvals[i], 3)
+      if (!is.na(p) && p < 0.001) p <- "<0.001"
+
+      result_rows[[length(result_rows) + 1]] <- data.frame(
+        Variable = term,
+        Level = "Per Unit Increase",
+        N = "-",
+        HR = or,
+        CI = ci,
+        P = ifelse(is.na(p), "-", as.character(p)),
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  result_df <- bind_rows(result_rows)
+  rownames(result_df) <- NULL
+  return(result_df)
+}
+```
+
+
+# ASSEMBLING final_dt
+
+## Load files
+
+First, load our sanitized files in the workspace.
+
+```{r}
+# Import Drug and Outcome Data
+standard_case_drug <- fread("sanitized_drug_data.csv")
+standard_case_outcome <- fread("sanitized_outcome_data.csv")
+demographics <- fread("sanitized_demographics.csv")
+sanitized_ther <- fread("sanitized_ther.csv")
+standard_case_outcome_category <- fread("standard_case_outcome_category.csv")
+
+# Dictionaries as well
+outcome_dictionary <- fread("sanitized_outcome_dictionary.csv")
+drug_dictionary <- fread("Updated_Drug_Dictionary_Fullnames.csv")
+
+# Clean up memory
+gc()
+```
+
+## Subsetting data to only the years of interest
+
+We'll subset the data to 2013-2023, because ICIs were approved in 2011.
+
+```{r}
+# Convert the filename column into full year format
+demographics[, year := as.numeric(substr(filename, 5, 6)) + 2000]  # Extract YY, convert to YYYY
+
+# Filter dataset to only include years 2013-2023
+demographics <- demographics[year >= 2013 & year <= 2023]
+
+# Print confirmation
+cat("✅ Subset complete: Data now includes only years 2013-2023!\n")
+
+# Clean up memory
+gc()
+```
+
+Subset the drug and outcome information by years as well.
+
+```{r}
+# Step 1: Extract the list of composite IDs from sanitized demographics
+valid_composite_ids <- unique(demographics$compositeid)
+
+# Step 2: Subset updated_drug_data and updated_outcome_data using these IDs
+standard_case_drug <- standard_case_drug[compositeid %in% valid_composite_ids]
+standard_case_outcome <- standard_case_outcome[compositeid %in% valid_composite_ids]
+sanitized_ther <- sanitized_ther[compositeid %in% valid_composite_ids]
+
+# Print confirmation
+cat("✅ Data successfully filtered: Only patients from 2013-2023 are included!\n")
+cat("Total records in standard_case_drug:", nrow(standard_case_drug), "\n")
+cat("Total records in standard_case_outcome:", nrow(standard_case_outcome), "\n")
+cat("total records in sanitized_ther:", nrow(sanitized_ther), "\n")
+
+# Clean up memory
+gc()
+```
+
+## Initialize final_dt
+
+The data structure we'll use is simple - we'll create one row for each
+compositeid present in standard_case_drug and/or standard_case_outcome,
+and then use a series of variables (mostly booleans) for age, sex,
+cancer, ICI, each specific ICI, culprit drug, each specific culprit
+drug, death, and cancer. Each of these will have to be added manually.
+
+First, initialize the data.table.
+
+```{r}
+# Get All Unique Composite IDs
+all_patient_ids <- unique(c(standard_case_drug$compositeid, standard_case_outcome$compositeid))
+
+# Initialize Final Data Table
+final_dt <- data.table(compositeid = all_patient_ids)
+
+# Clean up memory
+gc()
+```
+
+Then add demographic information (including country information)
+
+```{r}
+# Merge age, sex, country, and region from Demographics
+demographics_dt <- as.data.table(demographics)[, .(compositeid, age_yr, sex, country)]
+
+# Fill missing or empty 'country' values with "UNKNOWN"
+demographics_dt[is.na(country) | trimws(country) == "", country := "UNKNOWN"]
+
+# Replace specific unknown values with NA
+demographics_dt[country %in% c("COUNTRY NOT SPECIFIED", "UNKNOWN"), country := NA_character_]
+
+# Map countries to regions using 'countrycode'
+demographics_dt[, region := countrycode(country, origin = 'iso2c', destination = 'region')]
+
+# Manually assign region for specific country codes
+demographics_dt[country == "RE", region := "Sub-Saharan Africa"]
+
+# Replace any remaining NA values in 'region' with "Unknown"
+demographics_dt[is.na(region), region := "Unknown"]
+
+# Convert 'country' and 'region' columns to factors
+demographics_dt[, `:=`(
+  country = as.factor(country),
+  region = as.factor(region)
+)]
+
+# Set 'Unknown' as the reference level
+demographics_dt[, region := relevel(region, ref = "Unknown")]
+
+# Merge it into the final_dt
+final_dt <- merge(final_dt, demographics_dt, by = "compositeid", all.x = TRUE)
+
+head(final_dt)
+
+# Clean up memory
+gc()
+```
+
+Now add the concomitant drug count
+
+```{r}
+# Add Total Drug Count
+num_drugs <- standard_case_drug[, .(NumDrugs = .N), by = compositeid]
+final_dt <- merge(final_dt, num_drugs, by = "compositeid", all.x = TRUE)
+final_dt[, NumDrugs := fifelse(is.na(NumDrugs), 0, NumDrugs)]
+
+print(final_dt)
+
+# Clean up memory
+gc()
+```
+
+We next flag the ICI and culprit rows.
+
+-   For strong culprits, we'll pick: lamotrigine (705103), TMP/SMX
+    (40220482), phenytoin (740910), carbamazepine (740275), and
+    allopurinol (1167322). There's also sulfamethoxazole (1836430) and
+    trimethoprim (1705674).
+-   For weak culprits, we'll pick: azithromycin (1734104), ciprofloxacin
+    (1797513), oxcarbazepine (718122), sulfasalazine (964339), acyclovir
+    (1703687).
+-   For ICI, we'll pick: pembrolizumab (45775965), nivolumab (45892628),
+    ipilimumab (40238188), atezolizumab (42629079), durvalumab
+    (1594034), cemiplimab (35200783), tremelimumab (741851), dostarlimab
+    (1536789).
+
+```{r}
+# Define ICI and Culprit Drug Lists
+ici_list <- c(
+  "Pembrolizumab" = 45775965, "Nivolumab" = 45892628, "Ipilimumab" = 40238188, 
+  "Atezolizumab" = 42629079, "Durvalumab" = 1594034, "Cemiplimab" = 35200783, 
+  "Tremelimumab" = 741851, "Dostarlimab" = 1536789, "Avelumab" = 1593273
+)
+
+strong_culprit_list <- list(
+  "Lamotrigine" = c(705103),
+  "TMP_SMX" = c(40220482), 
+  "Phenytoin" = c(740910, 40238920, 40070682), # Some of these are combination drugs
+  "Carbamazepine" = c(740275),
+  "Allopurinol" = c(1167322, 40005864, 40005862) # Some of these are combination drugs
+)
+
+weak_culprit_list <- c(
+  "Azithromycin" = 1734104, "Ciprofloxacin" = 1797513, "Oxcarbazepine" = 718122, 
+  "Sulfasalazine" = 964339, "Acyclovir" = 1703687
+)
+
+# Identify Patients Exposed to Each ICI & Culprit Drug
+ici_cases <- standard_case_drug %>% filter(drug_concept_id %in% ici_list)
+strong_culprit_cases <- standard_case_drug %>% filter(drug_concept_id %in% unlist(strong_culprit_list))
+weak_culprit_cases <- standard_case_drug %>% filter(drug_concept_id %in% unlist(weak_culprit_list))
+
+# Clean up memory
+gc()
+```
+
+Now use these case subsets to add additional flags.
+
+```{r}
+# Initialize ICI Flags
+for (ici_name in names(ici_list)) {
+  final_dt[, (paste0("ICI_", ici_name)) := 0]
+}
+
+# Populate ICI Flags
+for (ici_name in names(ici_list)) {
+  ici_id <- ici_list[[ici_name]]
+  exposed_patients <- unique(ici_cases$compositeid[ici_cases$drug_concept_id == ici_id])
+  final_dt[compositeid %in% exposed_patients, (paste0("ICI_", ici_name)) := 1]
+}
+
+# Initialize Strong & Weak Culprit Flags
+for (culprit_name in names(strong_culprit_list)) {
+  final_dt[, (paste0("Strong_Culprit_", culprit_name)) := 0]
+}
+
+for (culprit_name in names(weak_culprit_list)) {
+  final_dt[, (paste0("Weak_Culprit_", culprit_name)) := 0]
+}
+
+# Populate Strong Culprit Flags (with OR logic across concept IDs)
+for (culprit_name in names(strong_culprit_list)) {
+  culprit_ids <- strong_culprit_list[[culprit_name]]  # vector of one or more concept IDs
+  exposed_patients <- unique(
+    standard_case_drug[drug_concept_id %in% culprit_ids, compositeid]
+  )
+  final_dt[compositeid %in% exposed_patients, 
+           (paste0("Strong_Culprit_", culprit_name)) := 1]
+}
+
+# Populate Weak Culprit Flags (with OR logic across concept IDs)
+for (culprit_name in names(weak_culprit_list)) {
+  culprit_ids <- weak_culprit_list[[culprit_name]]  # vector of one or more concept IDs
+  exposed_patients <- unique(
+    standard_case_drug[drug_concept_id %in% culprit_ids, compositeid]
+  )
+  final_dt[compositeid %in% exposed_patients, 
+           (paste0("Weak_Culprit_", culprit_name)) := 1]
+}
+
+## In addition to patients with the TMP-SMX injection code, we'll also add the patients who have individual codes for TMP or SMX individually
+# TMP-SMX Detection (Fix OR Logic)
+tmp_patients <- unique(standard_case_drug[drug_concept_id == 1705674, compositeid])
+smx_patients <- unique(standard_case_drug[drug_concept_id == 1836430, compositeid])
+tmp_or_smx_patients <- union(tmp_patients, smx_patients)
+pre_combined_patients <- unique(standard_case_drug[drug_concept_id == 40220482, compositeid])
+tmp_smx_patients <- unique(c(tmp_or_smx_patients, pre_combined_patients))
+
+# Assign TMP-SMX flag
+final_dt[, TMP_SMX := 0]
+final_dt[compositeid %in% tmp_smx_patients, TMP_SMX := 1]
+
+# Ensure TMP-SMX is included in StrongCulprit_TMP_SMX
+final_dt[, Strong_Culprit_TMP_SMX := pmax(Strong_Culprit_TMP_SMX, TMP_SMX, na.rm = TRUE)]
+
+# Remove TMP_SMX column after assigning it to StrongCulprit_TMP_SMX
+final_dt[, TMP_SMX := NULL]
+
+##Now add composite flags for groups of things
+# Populate composite flags
+final_dt[, ICI := as.integer(rowSums(.SD) > 0), .SDcols = paste0("ICI_", names(ici_list))]
+final_dt[, StrongCulprit := as.integer(rowSums(.SD) > 0), .SDcols = paste0("Strong_Culprit_", names(strong_culprit_list))]
+final_dt[, WeakCulprit := as.integer(rowSums(.SD) > 0), .SDcols = paste0("Weak_Culprit_", names(weak_culprit_list))]
+final_dt[, AllCulprit := as.integer(rowSums(.SD) > 0), 
+         .SDcols = c(paste0("Strong_Culprit_", names(strong_culprit_list)), 
+                     paste0("Weak_Culprit_", names(weak_culprit_list)))]
+
+# Replace NA with 0 for All Flags
+flag_columns <- c("ICI", "StrongCulprit", "WeakCulprit", "AllCulprit",
+                  paste0("ICI_", names(ici_list)), 
+                  paste0("Strong_Culprit_", names(strong_culprit_list)), 
+                  paste0("Weak_Culprit_", names(weak_culprit_list)))
+
+final_dt[, (flag_columns) := lapply(.SD, function(x) ifelse(is.na(x), 0, x)), .SDcols = flag_columns]
+
+# Preview
+print(final_dt)
+summary(final_dt)
+
+# Clean up memory
+gc()
+```
+
+Then add flags for specific ICI classes.
+
+```{r}
+# Assign PD-1, PD-L1, and CTLA-4 Flags Using OR Logic
+pd1_list <- c("Pembrolizumab" = 45775965, "Nivolumab" = 45892628, "Cemiplimab" = 35200783, "Dostarlimab" = 1536789)
+pdl1_list <- c("Atezolizumab" = 42629079, "Durvalumab" = 1594034, "Avelumab" = 1593273)
+ctla4_list <- c("Ipilimumab" = 40238188, "Tremelimumab" = 741851)
+
+final_dt[, ICI_PD1 := as.integer(rowSums(.SD) > 0), .SDcols = paste0("ICI_", names(pd1_list))]
+final_dt[, ICI_PDL1 := as.integer(rowSums(.SD) > 0), .SDcols = paste0("ICI_", names(pdl1_list))]
+final_dt[, ICI_CTLA4 := as.integer(rowSums(.SD) > 0), .SDcols = paste0("ICI_", names(ctla4_list))]
+
+# Clean up memory
+gc()
+```
+
+Now for something a little fancier - add flags for being exposed to more
+than one ICI, and one for the number of ICI a patient is exposed to.
+
+```{r}
+# Identify Patients Exposed to More Than One ICI (Dual ICI Flag)
+final_dt[, Dual_ICI := as.integer(rowSums(.SD) >= 2), .SDcols = paste0("ICI_", names(ici_list))]
+
+# Add Column for Number of ICIs a patient is exposed to
+final_dt[, ICI_Count := rowSums(.SD), .SDcols = paste0("ICI_", names(ici_list))]
+
+# Categorize ICI_Count into three levels: 'Zero', 'One', and 'Multiple'
+final_dt[, ICI_Count_Factor := fifelse(ICI_Count == 0, "Zero",
+                         fifelse(ICI_Count == 1, "One", "Multiple"))]
+
+# Convert ICI_Count to a factor with 'Zero' as the reference level
+final_dt[, ICI_Count_Factor := factor(ICI_Count_Factor, levels = c("Zero", "One", "Multiple"))]
+
+# Clean up memory
+gc()
+```
+
+Add a column for the primary cause (PS).
+
+```{r}
+# Subset by PS 
+standard_case_drug_PS <- standard_case_drug[role_cod=="PS"]
+
+# Merge with final_dt
+final_dt <- merge(final_dt, standard_case_drug_PS, by = "compositeid", all.x = TRUE)
+
+# Filter down by columns
+final_dt$drug_seq <- NULL
+final_dt$role_cod <- NULL
+
+# Clean up memory
+gc()
+```
+
+## Deal with combination drugs
+
+We've dealt with a similar issue in the exposure matrix above, but this
+time we have to consider the primary suspects. A big issue with
+combination drugs is the fact that the only combination code for TMP /
+SMX is an injection (it's likely people reported this when they just
+gave oral bactrim, because there doesn't seem to be a drug_concept_id
+for oral bactrim). We will consider a patient having a primary suspect
+of TMP/SMX if both TMP and SMX are coded separately and one is coded as
+the primary cause (this is in contrast with TMP/SMX exposure, in which
+exposure to either TMP or SMX is considered exposure to TMP/SMX).
+
+```{r}
+## In addition to patients with the TMP-SMX injection code, we'll also re-code the primary suspect for those patients whose primary suspect is TMP or SMX - TMP is almost never used alone.
+
+# TMP-SMX Detection (Fix & OR Logic)
+tmp_patients_ps <- unique(standard_case_drug_PS[drug_concept_id == 1705674, compositeid])
+tmp_patients <- unique(standard_case_drug[drug_concept_id == 1705674, compositeid])
+
+smx_patients_ps <- unique(standard_case_drug_PS[drug_concept_id == 1836430, compositeid])
+smx_patients <- unique(standard_case_drug[drug_concept_id == 1836430, compositeid])
+
+
+# Find the patients who have one of TMP or SMX as a primary cause, and the other one in the drug list
+tmp_smx_combined_patients_ps <- union(intersect(tmp_patients_ps, smx_patients), intersect(tmp_patients, smx_patients_ps))
+
+# Find the list of patients for whom TMP / SMX is the primary suspect (those with TMP/SMX already coded as primary, plus those with either TMP or SMX as primary)
+pre_combined_patients_ps <- unique(standard_case_drug_PS[drug_concept_id == 40220482, compositeid])
+tmp_smx_patients_ps <- unique(c(tmp_smx_combined_patients_ps, pre_combined_patients_ps))
+
+# ✅ Replace the primary suspect drug for identified TMP-SMX patients
+final_dt[compositeid %in% tmp_smx_patients_ps, drug_name := "TMP / SMX"]
+final_dt[compositeid %in% tmp_smx_patients_ps, drug_concept_id := 40220482]
+
+# Clean up variables
+rm(tmp_patients, smx_patients, tmp_smx_patients, pre_combined_patients)
+```
+
+##Sanitize age and sex variables
+
+Fix the age_yr and sex variables - the age_yr will be binned in 20-year
+increments, sex variable will be coded as F, M, and NS.
+
+```{r}
+# Sanitize age_yr and sex variables in final_dt
+final_dt <- final_dt %>%
+  mutate(
+    sex = ifelse(sex %in% c("M", "F"), sex, "NS")  # Replace unknown values with "NS"
+  )
+
+# Add age_group variable
+# Preferred syntax to avoid shallow copy warnings
+setDT(final_dt)
+set(final_dt, j = "age_group", value = cut(
+  final_dt$age_yr,
+  breaks = c(-Inf, 20, 40, 60, 80, Inf),
+  labels = c("0-20", "21-40", "41-60", "61-80", "80+"),
+  right = TRUE
+))
+
+# Replace NA with "Unknown"
+final_dt[is.na(age_group), age_group := "Unknown"]
+
+# Convert to Proper Data Types (Ensure Categorical Variables Are Factors)
+final_dt <- final_dt %>%
+  mutate(sex = as.factor(sex),  # Ensure sex is a factor
+    age_group = as.factor(age_group)  # Ensure outcome variable is a factor
+  )
+
+# Clean up memory
+gc()
+```
+
+##Add mortality information
+
+We'll need a function to combine isr and primaryid into one type of id -
+the compositeid. For most of the files, this has already been done, but
+it hasn't been for the file with mortality information
+(standard_case_outcome_category).
+
+```{r}
+# Function to create compositeids based on primaryid and isr, with NA handling
+create_compositeid <- function(data) {
+    # Ensure data is a data.table
+    data <- as.data.table(data)
+    
+    # Check if both primaryid and isr columns exist
+    if ("primaryid" %in% names(data) & "isr" %in% names(data)) {
+        # Create compositeid using primaryid if it's not NA, otherwise use isr
+        data[, compositeid := ifelse(!is.na(primaryid), paste0("pid.", primaryid), paste0("isr.", isr))]
+    
+    # If only primaryid exists
+    } else if ("primaryid" %in% names(data)) {
+        data[, compositeid := paste0("pid.", primaryid)]
+    
+    # If only isr exists
+    } else if ("isr" %in% names(data)) {
+        data[, compositeid := paste0("isr.", isr)]
+    
+    # If neither column exists, throw an error
+    } else {
+        stop("Neither 'primaryid' nor 'isr' columns found in the data.")
+    }
+    
+    # Return the updated data table
+    return(data)
+}
+
+# Clean up memory
+gc()
+```
+
+Then apply this function to our new table:
+
+```{r}
+# Add a compositeid and remove the other columns
+standard_case_outcome_category <- create_compositeid(standard_case_outcome_category)
+standard_case_outcome_category$primaryid <- NULL
+standard_case_outcome_category$isr <- NULL
+standard_case_outcome_category$snomed_concept_id <- NULL
+
+# Add mortality information to final_dt
+final_dt <- merge(final_dt, standard_case_outcome_category, by = "compositeid", all.x = TRUE)
+
+# Determine if any 'DE' exists per compositeid
+final_dt[, Death := if (any(outc_code == "DE", na.rm = TRUE)) {
+  1L
+} else if (all(is.na(outc_code))) {
+  NA_integer_
+} else {
+  0L
+}, by = compositeid]
+
+# Remove duplicate rows while keeping only one row per compositeid
+final_dt <- unique(final_dt, by = "compositeid")
+
+# Print the cleaned dataset
+print(final_dt)
+summary(final_dt)
+
+# Clean up memory
+gc()
+```
+
+## Add biologic vs small molecule classification
+
+Add a column classifying whether the causative drug is a biologic or not
+(small molecule). Biologics will be those drugs that contain a word
+ending with "mab" or "cept".
+
+```{r}
+# Classify drugs as biologics or small molecules
+final_dt <- final_dt %>%
+  mutate(drug_class = ifelse(grepl("mab$|cept$", drug_name, ignore.case = TRUE),
+                             "Biologic", "Small Molecule"))
+
+# Clean up memory
+gc()
+```
+
+##Add SJS/TEN flag
+
+Then add a flag for SJS/TEN cases.
+
+```{r}
+# Flag SJS/TEN Cases
+SJSTEN_IDs <- c(36009724, 43010942, 36009754)
+sjs_ten_cases <- standard_case_outcome %>%
+  filter(outcome_concept_id %in% SJSTEN_IDs) %>%
+  select(compositeid) %>%
+  distinct() %>%
+  mutate(SJSTEN = 1)
+
+final_dt <- merge(final_dt, sjs_ten_cases, by = "compositeid", all.x = TRUE)
+final_dt[, SJSTEN := fifelse(is.na(SJSTEN), 0, SJSTEN)]
+
+# Convert SJSTEN variable to factors
+final_dt <- final_dt %>%
+  mutate(SJSTEN = as.factor(SJSTEN))
+
+print(final_dt)
+summary(final_dt)
+
+# Clean up memory
+gc()
+```
+
+##Add TTE information
+
+Next, we can left joint combined_ther to the standard_case_drug table to
+get the dates we needed for TTE analysis.
+
+```{r}
+# Perform a left join using base R, ensuring that non-matching rows get NA
+drug_exposure <- merge(standard_case_drug_PS, sanitized_ther, 
+                       by = c("compositeid", "drug_seq"), 
+                       all.x = TRUE)
+
+# View the result
+print(drug_exposure)
+```
+
+The patient demographics table has the start date of the given reaction.
+Now we can add that data to the outcome_data.
+
+```{r}
+# Perform a left join to add the demographic columns to outcome data
+# Use merge with all.x = TRUE to preserve all rows of outcome data
+updated_outcome_data <- merge(standard_case_outcome, demographics, by = "compositeid", all.x = TRUE)
+
+# View the updated data to verify the join
+print(updated_outcome_data)
+```
+
+We'll need the event_dt from the updated_outcome_data, and the start_dt
+from drug_exposure. We can first subset both of these to just SJS/TEN.
+
+```{r}
+# Subset outcome data to just SJS/TEN
+outcome_data_sjsten <- as.data.table(updated_outcome_data)[, .(compositeid, event_dt, fda_dt, rept_dt)]
+outcome_data_sjsten <- outcome_data_sjsten[compositeid %in% sjs_ten_cases$compositeid]
+
+# Subset drug_exposure
+exposure_data_sjsten <- drug_exposure[compositeid %in% sjs_ten_cases$compositeid]
+
+# Merge these two
+drug_TTE_sjsten <- merge(outcome_data_sjsten, exposure_data_sjsten, by = "compositeid", all = TRUE)
+```
+
+Then, we can calculate the time-to-event (TTE) from these numbers.
+
+```{r}
+# Function to check if date is complete (YYYYMMDD format)
+is_full_date <- function(date) {
+  nchar(as.character(date)) == 8  # Only keep dates with 8 characters
+}
+
+# Subset rows with complete dates
+drug_TTE_sjsten <- drug_TTE_sjsten[
+  is_full_date(start_dt) & is_full_date(event_dt)  # Filter for full dates only
+]
+
+# Convert to Date format
+drug_TTE_sjsten[, start_dt := as.Date(as.character(start_dt), format = "%Y%m%d")]
+drug_TTE_sjsten[, event_dt := as.Date(as.character(event_dt), format = "%Y%m%d")]
+
+# Calculate TTE for each row (Time-to-Event in days)
+drug_TTE_sjsten[, TTE := as.numeric(event_dt - start_dt)]
+
+# Filter TTE between 0 and 180 days
+drug_TTE_sjsten <- drug_TTE_sjsten %>% filter(TTE > 0 & TTE <= 180)
+
+# Keep row with lowest TTE per compositeid
+drug_TTE_sjsten <- drug_TTE_sjsten %>%
+  group_by(compositeid) %>%
+  slice_min(order_by = TTE, with_ties = FALSE) %>%
+  ungroup()
+```
+
+Now, we have the TTE information for each drug. We also need to fix the
+TMP/SMX rows, like we did with final_dt.
+
+```{r}
+# Ensure both are data.tables
+setDT(drug_TTE_sjsten)
+setDT(final_dt)
+
+# Create a clean mapping table (compositeid -> updated drug fields)
+final_updates <- unique(final_dt[, .(compositeid, drug_name, drug_concept_id)])
+
+# Rename to avoid conflict in merge
+setnames(final_updates, c("drug_name", "drug_concept_id"), c("updated_drug_name", "updated_drug_concept_id"))
+
+# Perform left join
+drug_TTE_sjsten <- merge(
+  drug_TTE_sjsten,
+  final_updates,
+  by = "compositeid",
+  all.x = TRUE,
+  suffixes = c("", ".final")
+)
+
+# Apply updates only if non-NA
+drug_TTE_sjsten[!is.na(updated_drug_name), drug_name := updated_drug_name]
+drug_TTE_sjsten[!is.na(updated_drug_concept_id), drug_concept_id := updated_drug_concept_id]
+
+# Remove the temporary columns
+drug_TTE_sjsten[, c("updated_drug_name", "updated_drug_concept_id") := NULL]
+```
+
+## Add cancer information
+
+The next column to add is a boolean for the presence or absence of a
+cancer diagnosis.
+
+In order to filter this down to just cancer patients, we need to
+distinguish cancer from non-cancer. We will do this with keywords.
+
+```{r}
+# Load your indications file
+indications_index_dt <- fread("table_of_indications.csv")
+indications_index_dt[, indication_clean := toupper(trimws(indication))]
+
+cancer_keywords <- c(
+  # General terms
+  "CANCER", "CARCINOMA", "MALIGNANT", "MALIGNANCY", "NEOPLASM", "TUMOR", "TUMOUR", "METASTASIS", "METASTASES", "METASTATIC", "BLASTOMA",
+  "PARANEOPLASTIC", "ONCOLOGIC COMPLICATION", "CHEMOTHERAPY", "NEOADJUVANT THERAPY", "ADJUVANT THERAPY", "METAPLASIA", "\\bMASS\\b", "RADIOIMMUNOTHERAPY", "\\bPAPILLOMA\\b",
+  
+  # Skin cancers
+  "MELANOMA", "LENTIGO MALIGNA", "MYCOSIS FUNGOIDES", "SEZARY SYNDROME", 
+  
+  # Hematologic malignancies
+  "LYMPHOMA", "MYELOMA", "LEUKEMIA", "LEUKAEMIA", "MYELODYSPLASTIC", "MYELOPROLIFERATIVE",
+  "POLYCYTHEMIA VERA", "POLYCYTHAEMIA VERA", "ESSENTIAL THROMBOCYTHEMIA", "ESSENTIAL THROMBOCYTHAEMIA", "HODGKIN",
+  "ESSENTIAL THROMBOCYTOSIS", "MYELOFIBROSIS", "MACROGLOBULINEMIA", "MACROGLOBULINAEMIA",
+  "POST TRANSPLANT LYMPHOPROLIFERATIVE DISORDER", "BLAST CELL CRISIS", "CHLOROMA", "MASTOCYTOSIS",
+
+  # Brain and CNS
+  "GLIOMA", "GLIOBLASTOMA", "ASTROCYTOMA", "EPENDYMOMA", "MENINGIOMA", "CRANIOPHARYNGIOMA", "CHORDOMA", "GERMINOMA", "HEMANGIOPERICYTOMA",
+
+  # Soft tissue and bone
+  "SARCOMA", "FIBROMA", "SCHWANNOMA", "BOWEN'S DISEASE", "RETINAL MELANOCYTOMA", "CHONDROMA", "LIPOMA",
+
+  # GI and endocrine tumors
+  "INSULINOMA", "LINITS PLASTICA", "CHROMOCYTOMA", "CARCINOID",
+
+  # Other specific types
+  "TERATOMA", "ADENOMA", "MESOTHELIOMA", "BONE MARROW INFILTRATION", "THYMOMA",
+  "RICHTER'S SYNDROME",  "PAGET'S DISEASE OF THE VULVA", "PAGET'S DISEASE OF THE PENIS", "EXTRAMAMMARY PAGET'S DISEASE")
+
+
+# Build audit table separately
+# This will tell us which indications were mapped as cancer
+audit_dt <- copy(indications_index_dt)[, .(indication, indication_concept_id, indication_clean)]
+
+# Build keyword flags
+for (kw in cancer_keywords) {
+  audit_dt[, paste0("keyword_", kw) := str_detect(indication_clean, kw)]
+}
+
+# Build exclusion flags
+audit_dt[, exclude_flag := str_detect(indication_clean, "HYPERTENSION MALIGNANT|HYPERTHERMIA MALIGNANT|BODY MASS|VACCINATION SITE MASS|BONE MASS DECREASED|HUMAN PAPILLOMA VIRUS|PAPILLOMA VIRAL|CHONDROMALACIA")]
+audit_dt[, tumor_nf_flag := str_detect(indication_clean, "TUMOR NECROSIS FACTOR")]
+
+# Initialize cancer flag
+indications_index_dt[, cancer_flag := FALSE]
+
+# Apply rule logic using audit table
+normal_idx <- which(audit_dt$tumor_nf_flag == FALSE & audit_dt$exclude_flag == FALSE)
+normal_cols <- paste0("keyword_", cancer_keywords)
+normal_hits <- rowSums(audit_dt[normal_idx, ..normal_cols]) > 0
+set(indications_index_dt, i = normal_idx[normal_hits], j = "cancer_flag", value = TRUE)
+
+# Tumor necrosis factor cases (exclude "TUMOR")
+keywords_excluding_tumor <- setdiff(cancer_keywords, "TUMOR")
+tnf_idx <- which(audit_dt$tumor_nf_flag == TRUE & audit_dt$exclude_flag == FALSE)
+tnf_cols <- paste0("keyword_", keywords_excluding_tumor)
+tnf_hits <- rowSums(audit_dt[tnf_idx, ..tnf_cols]) > 0
+set(indications_index_dt, i = tnf_idx[tnf_hits], j = "cancer_flag", value = TRUE)
+
+# Explicitly set excluded rows to FALSE
+exclude_idx <- which(audit_dt$exclude_flag == TRUE)
+set(indications_index_dt, i = exclude_idx, j = "cancer_flag", value = FALSE)
+
+# Output summary
+cat("Cancer-related indications:", sum(indications_index_dt$cancer_flag), "\n")
+cat("Non-cancer indications:", sum(!indications_index_dt$cancer_flag), "\n")
+
+# Export results
+fwrite(indications_index_dt, "table_of_indications_with_cancer_flag.csv")
+fwrite(audit_dt, "keyword_audit_table.csv")
+```
+
+Now we'll use this information to subset to those patients with cancer
+indication in their data. We'll add the cancer flag to our final_dt.
+
+```{r}
+# Read in standard_case_indication file to build cancer flag
+standard_case_indication <- fread("standard_case_indication.csv")
+standard_case_indication[, compositeid := ifelse(!is.na(isr),
+                                                   paste0("isr.", isr),
+                                                   paste0("pid.", primaryid))]
+# Clean up extra columns
+standard_case_indication$isr <- NULL
+standard_case_indication$primaryid <- NULL
+```
+
+Merge the cancer flag into the standard_case_indication from
+indications_index_dt
+
+```{r}
+# Merge cancer_flag from indications_index_dt
+standard_case_indication <- merge(
+  standard_case_indication,
+  indications_index_dt[, .(indication_concept_id, cancer_flag)],
+  by = "indication_concept_id",
+  all.x = TRUE
+)
+
+# Collapse to case-level cancer flag (any cancer indication → cancer case)
+case_cancer_flag <- standard_case_indication[, .(cancer_flag = any(cancer_flag == TRUE)), by = compositeid]
+
+# Merge back into final_dt
+final_dt <- merge(final_dt, case_cancer_flag, by = "compositeid", all.x = TRUE)
+final_dt[is.na(cancer_flag), cancer_flag := FALSE]
+```
+
+## Ensure all variables are factors
+
+R requires that variables that are used for logistic regression are in
+factor form. We’ll transform them now.
+
+```{r}
+# Ensure final_dt is a data.table
+final_dt <- as.data.table(final_dt)
+
+# Assign the cancer flag as a factor with two levels using 0/1 encoding
+final_dt <- final_dt %>%
+  mutate(cancer_flag = factor(as.integer(cancer_flag), levels = c(0, 1)))
+
+# Character factors with specified levels
+final_dt$sex <- factor(final_dt$sex, levels = c("F", "M", "NS"))
+final_dt$ICI_Count_Factor <- factor(final_dt$ICI_Count_Factor, levels = c("Zero", "One", "Multiple"))
+
+# Age
+final_dt$age_group <- factor(
+  final_dt$age_group,
+  levels = c("0-20", "21-40", "41-60", "61-80", "80+", "Unknown")
+)
+
+final_dt$drug_class <- factor(final_dt$drug_class)
+final_dt$region <- factor(final_dt$region)
+final_dt$country <- factor(final_dt$country)
+final_dt$outc_code <- factor(final_dt$outc_code)
+final_dt$Death <- factor(final_dt$Death, levels = c(0, 1))
+final_dt$SJSTEN <- factor(final_dt$SJSTEN, levels = c(0, 1))  # Ensures correct reference
+
+# Binary 0/1 numeric columns to factors
+binary_cols <- c("ICI_Pembrolizumab", "ICI_Nivolumab", "ICI_Ipilimumab", "ICI_Atezolizumab", "ICI_Durvalumab", "ICI_Cemiplimab", "ICI_Tremelimumab", "ICI_Dostarlimab", "ICI_Avelumab", "Strong_Culprit_Lamotrigine", "Strong_Culprit_TMP_SMX", "Strong_Culprit_Phenytoin", "Strong_Culprit_Carbamazepine", "Strong_Culprit_Allopurinol", "Weak_Culprit_Azithromycin", "Weak_Culprit_Ciprofloxacin", "Weak_Culprit_Oxcarbazepine", "Weak_Culprit_Sulfasalazine", "Weak_Culprit_Acyclovir", "ICI", "StrongCulprit", "WeakCulprit", "AllCulprit", "ICI_PD1", "ICI_PDL1", "ICI_CTLA4", "Dual_ICI")
+
+final_dt[, (binary_cols) := lapply(.SD, function(x) factor(x, levels = c(0, 1))), .SDcols = binary_cols]
+
+# Then fix final_dt to change NA in the drug_name column to "No Primary Suspect Listed"
+final_dt <- final_dt %>% mutate(drug_name = ifelse(is.na(drug_name), "No Primary Suspect Listed", drug_name))
+
+#Clean up memory
+gc()
+```
+
+## Cancer auditing
+
+There are several cases of ICI-exposed patients that have 0 for a cancer
+flag, which is contradictory. Let's audit this further.
+
+First, lets summarize the issue:
+
+```{r}
+# 🔁 Copy original data
+dt_temp <- copy(final_dt)
+
+# 🧼 Ensure consistent format for both flags
+dt_temp[, ICI := as.character(ICI)]
+dt_temp[, cancer_flag := as.character(cancer_flag)]
+
+# 📊 Count combination frequencies
+ici_cancer_table <- dt_temp[, .N, by = .(ICI, cancer_flag)]
+
+# 🧱 Reshape to wide format
+ici_cancer_wide <- dcast(
+  ici_cancer_table,
+  ICI ~ cancer_flag,
+  value.var = "N",
+  fill = 0
+)
+
+# 🏷 Label rows
+rownames(ici_cancer_wide) <- fifelse(ici_cancer_wide$ICI == "0", "No ICI", "ICI")
+
+# 🔁 Convert to matrix, selecting only "0" and "1" columns
+ici_cancer_matrix <- as.matrix(ici_cancer_wide[, c("0", "1")])
+
+# 🏷 Rename columns for readability
+colnames(ici_cancer_matrix) <- c("No Cancer", "Cancer")
+
+# ✅ Print final 2x2 matrix
+print(ici_cancer_matrix)
+```
+
+So there are a substantial number of patients exposed to ICI without a
+cancer flag - 22426 in fact, compared to 167330 ICI-exposed people with
+cancer (meaning 11.8% are misclassified). Let's see what indications ICI
+are given for in these patients.
+
+```{r}
+# Get compositeids from patients with ICI exposure but no cancer flag
+ici_nocancer_ids <- final_dt[ICI == 1 & cancer_flag == 0, compositeid]
+
+# Subset standard_case_drug and standard_case_indication to those patients
+ici_nocancer_drugs <- standard_case_drug[compositeid %in% ici_nocancer_ids]
+ici_nocancer_indications <- standard_case_indication[compositeid %in% ici_nocancer_ids]
+
+# Merge on compositeid and drug_seq
+ici_indications_merged <- merge(
+  ici_nocancer_drugs,
+  ici_nocancer_indications,
+  by.x = c("compositeid", "drug_seq"),
+  by.y = c("compositeid", "indi_drug_seq"),
+  all.x = TRUE
+)
+
+# Filter down to ICI drugs only
+ici_only_nocancer <- ici_indications_merged[drug_concept_id %in% ici_list]
+
+# Summarize indications
+ici_only_nocancer[, .N, by = indi_pt][order(-N)]
+```
+
+Manually inspecting that file reveals that 14974 cases use ICI for an
+unknown indication, and 10468 don't have an indication listed. That's
+the vast majority.
+
+To fix this - we'll flag patients that receive a drug only used for
+cancer as cancer patients. To figure out which drugs those are, we have
+to audit the drugs manually. The rules we'll use are:
+
+-   If the drug is used, either on-label or off-label, only for the
+    direct treatment of neoplasms, it will be **included** as a cancer
+    drug. This includes all checkpoint inhibitors, almost alkylating
+    agents (except cyclophosphamide), and almost all kinase inhibitors
+    (except JAKi).
+
+-   If the drug is used, either on-label or off-label, for the treatment
+    of autoimmune conditions (rituximab, JAK inhibitor), it will **NOT
+    be included** as a cancer drug.
+
+-   If the drug is used, either on-label of off-label, for endocrine
+    indications (central precocious puberty, endometriosis, transgender
+    therapy), it will **not be included**. This one is more tricky,
+    because these are often off-label and center-dependent, but we will
+    be conservative about what to call a cancer drug.
+
+-   If the drug is mainly or only used for some cancer-adjacent or
+    chemotherapy-induced condition, rather than cancer itself
+    (filgrastim, mesna, drugs used for bone marrow depletion before
+    HSCT, meds for pain or nausea), it will be **excluded** as a cancer
+    drug.
+
+```{r}
+# 🔁 Merge drug and indication tables on compositeid + drug_seq
+drug_indication_merged <- merge(
+  standard_case_drug,
+  standard_case_indication,
+  by.x = c("compositeid", "drug_seq"),
+  by.y = c("compositeid", "indi_drug_seq"),
+  all = FALSE
+)
+
+# 🧼 Filter to rows where cancer_flag == TRUE
+cancer_drug_usage <- drug_indication_merged[cancer_flag == TRUE]
+
+# 📊 Count how often each drug appears with a cancer indication
+cancer_drug_counts <- cancer_drug_usage[
+  , .N, by = .(drug_name, drug_concept_id)
+][order(-N)]
+
+# Export to CSV
+fwrite(cancer_drug_counts, "drugs_with_cancer_indications.csv")
+```
+
+I have manually annotated the top 1000 drugs given for cancer-related
+indications, of which 252 were marked as cancer drugs. Now, we will add
+the cancer flag to any patient exposed to those drugs.
+
+```{r}
+# 📥 Load manually annotated drug list
+manual_cancer_drugs <- fread("drugs_with_cancer_indications_top1000.csv")
+
+# ✅ Get drug_concept_ids manually marked as cancer drugs
+confirmed_cancer_drugs <- manual_cancer_drugs[cancer_drug_manual == TRUE, drug_concept_id]
+
+# 🔍 Find compositeids exposed to these drugs
+cancer_patients_from_drugs <- standard_case_drug[
+  drug_concept_id %in% confirmed_cancer_drugs,
+  unique(compositeid)
+]
+
+# ✅ Clean up internal references before column assignment
+setDT(final_dt)
+
+# 🧪 Store original flag for comparison (as character)
+final_dt[, prev_cancer_flag := as.character(cancer_flag)]
+
+# ✅ Update to "1" (the cancer-positive level) where appropriate
+final_dt[compositeid %in% cancer_patients_from_drugs, cancer_flag := "1"]
+
+# 🔢 Count how many new updates occurred
+new_flags_added <- final_dt[
+  compositeid %in% cancer_patients_from_drugs &
+  prev_cancer_flag == "0" & cancer_flag == "1",
+  .N
+]
+
+# 🧼 Clean up and restore factor type
+final_dt[, prev_cancer_flag := NULL]
+final_dt[, cancer_flag := factor(cancer_flag, levels = c("0", "1"))]
+
+# 📊 Report
+cat("Number of new cancer_flag entries added based on manual drug annotation:", new_flags_added, "\n")
+
+```
+
+Let's see how that matrix looks now:
+
+```{r}
+# 🔁 Copy original data
+dt_temp <- copy(final_dt)
+
+# 🧼 Ensure consistent format for both flags
+dt_temp[, ICI := as.character(ICI)]
+dt_temp[, cancer_flag := as.character(cancer_flag)]
+
+# 📊 Count combination frequencies
+ici_cancer_table <- dt_temp[, .N, by = .(ICI, cancer_flag)]
+
+# 🧱 Reshape to wide format
+ici_cancer_wide <- dcast(
+  ici_cancer_table,
+  ICI ~ cancer_flag,
+  value.var = "N",
+  fill = 0
+)
+
+# 🏷 Label rows
+rownames(ici_cancer_wide) <- fifelse(ici_cancer_wide$ICI == "0", "No ICI", "ICI")
+
+# 🔁 Convert to matrix, selecting only "0" and "1" columns
+ici_cancer_matrix <- as.matrix(ici_cancer_wide[, c("0", "1")])
+
+# 🏷 Rename columns for readability
+colnames(ici_cancer_matrix) <- c("No Cancer", "Cancer")
+
+# ✅ Print final 2x2 matrix
+print(ici_cancer_matrix)
+
+```
+
+Excellent - all ICI cases are now cancer-related.
+
+# FIGURE GENERATION
+
+Now that we've generated the final_dt and the TTE information, we can
+use it to generate the figures directly - they contain all the
+information needed.
+
+## FIGURE OUTLINE
+
+This section describes the structure and purpose of each figure
+generated for the analysis.
+
+-   **Figure 1 – SJS/TEN Cases in FAERS**\
+    Summary of the \~17,000 SJS/TEN cases in FAERS, including age, sex,
+    and causative drug.
+
+-   **Figure S1 – Demographics**\
+    Descriptive plots of age, sex, region, and suspected culprit drug
+    class across all SJS/TEN cases in FAERS from 2013–2023.
+
+-   **Figure 2 – Disproportionality Analysis**\
+    Heatmaps of reporting odds ratios (RORs) for SJS/TEN in association
+    with ICI-small molecule drug pairs, highlighting known high-risk
+    combinations.
+
+-   **Figure S2 – Allopurinol Logit**\
+    Logistic regression evaluating the interaction of allopurinol and
+    ICI exposure on SJS/TEN development, adjusting for age, sex, drug
+    count, and cancer.
+
+-   **Figure S3 – TMP-SMX Logit**\
+    Logistic regression evaluating the interaction of TMP-SMX and ICI
+    exposure on SJS/TEN development, adjusting for age, sex, drug count,
+    and cancer.
+
+-   **Figure 3 – Development and Mortality Logistic Models (Full
+    FAERS)**\
+    Multivariate logistic regressions for predictors of SJS/TEN
+    development and associated mortality in the full FAERS dataset,
+    including strong and weak culprit exposure, cancer, ICI exposure,
+    and demographic covariates.
+
+-   **Figure S4 – Restricted Logit Model**\
+    A model based on Figure 3, but excluding culprit exposure variables,
+    to explore the independent relationship of cancer and ICI with
+    SJS/TEN development in a more restrictive fashion.
+
+-   **Figure 4 – Small-Molecule SJS/TEN Logistic Models**\
+    Multivariable logistic models evaluating predictors of both SJS/TEN
+    development and mortality, restricted to reports with small molecule
+    drugs as the primary suspect. Models include drug identity, ICI
+    exposure (in three levels), age, sex, and drug count.
+
+-   **Figure S5 – Small-Molecule SJS/TEN Logistic Models (Cancer
+    Patients)**\
+    Replication of Figure 4 within the subset of patients with cancer
+    indications in FAERS. The reason it was subsetted in this way,
+    instead of just including cancer as a variable in Figure 4, is
+    because the set of causative drugs is different in the cancer
+    population than the general population.
+
+-   **Figure S6 and S7 – ICI-Induced SJS/TEN Logit**\
+    Logistic regression among reports where ICIs were the primary
+    suspect drug, evaluating the role of co-prescribed small molecules
+    in mediating SJS/TEN risk.
+
+-   **Figure 5 – Latency Analysis (Full FAERS)**\
+    Median time-to-onset for SJS/TEN by drug, stratified by ICI exposure
+    and cancer diagnosis.
+
+-   **Figure S8 – Latency Analysis (Small-Molecule SJS/TEN)**\
+    Subset of latency analysis restricted to patients with
+    small-molecule-induced SJS/TEN, stratified by ICI exposure.
+
+-   **Figure S9 – Latency Analysis (Small-Molecule SJS/TEN, Cancer
+    Patients)**\
+    Further subset of latency analysis restricted to cancer patients
+    with small-molecule-induced, stratified by ICI exposure.
+
+-   **Figure S10 – VIF Heatmap**\
+    Heatmap summarizing generalized variance inflation factors (GVIF)
+    across all major regression models to assess collinearity between
+    covariates.
+
+## FIGURE 1 - SJS/TEN SUMMARY
+
+### FIGURE 1A - SUMMARY TABLE
+
+This generates a table summarizing SJS/TEN cases in FAERS by various
+demographic variables. We use the gt package to generate HTML tables
+with a clean look.
+
+```{r}
+# Subset final_dt to just SJS/TEN cases
+final_SJSTEN_dt <- final_dt[SJSTEN == 1]
+
+# ─── Prepare Components ─────────────────────────────────────────────
+
+# Total patients
+total_row <- tibble(
+  Group = "Overall",
+  Subgroup = "Total Patients",
+  Value = as.character(nrow(final_SJSTEN_dt))
+)
+
+# Age summary
+age_row <- final_SJSTEN_dt %>%
+  summarise(
+    Group = "Overall",
+    Subgroup = "Age (Median [IQR])",
+    Value = sprintf("%.1f [%d–%d]",
+                    median(age_yr, na.rm = TRUE),
+                    quantile(age_yr, 0.25, na.rm = TRUE),
+                    quantile(age_yr, 0.75, na.rm = TRUE))
+  )
+
+# Sex breakdown
+sex_rows <- final_SJSTEN_dt %>%
+  count(sex) %>%
+  mutate(
+    Group = "Sex",
+    Subgroup = as.character(sex),
+    Value = as.character(n)
+  ) %>%
+  select(Group, Subgroup, Value)
+
+# Region breakdown
+region_rows <- final_SJSTEN_dt %>%
+  count(region) %>%
+  mutate(
+    Group = "Region",
+    Subgroup = as.character(region),
+    Value = as.character(n)
+  ) %>%
+  select(Group, Subgroup, Value)
+
+# Mortality outcome
+death_rows <- final_SJSTEN_dt %>%
+  count(Death) %>%
+  mutate(
+    Group = "Outcomes",
+    Subgroup = case_when(
+      Death == 1 ~ "Dead",
+      Death == 0 ~ "Alive",
+      TRUE ~ "Unknown"
+    ),
+    Value = as.character(n)
+  ) %>%
+  select(Group, Subgroup, Value)
+
+# Top 10 Causative Drugs
+top_drugs_rows <- final_SJSTEN_dt %>%
+  count(drug_name, sort = TRUE) %>%
+  mutate(
+    Group = "Top 10 Causative Drugs",
+    Subgroup = drug_name,
+    Value = as.character(n)
+  ) %>%
+  slice_head(n = 10) %>%
+  select(Group, Subgroup, Value)
+
+# ICI Exposure
+ici_exposure_rows <- final_SJSTEN_dt %>%
+  mutate(ICI_exposed = ifelse(ICI == 1, "Yes", "No")) %>%
+  count(ICI_exposed) %>%
+  mutate(
+    Group = "ICI Exposure",
+    Subgroup = ICI_exposed,
+    Value = as.character(n)
+  ) %>%
+  select(Group, Subgroup, Value)
+
+# Cancer Diagnosis
+cancer_rows <- final_SJSTEN_dt %>%
+  mutate(cancer_flag = ifelse(cancer_flag == 1, "Yes", "No")) %>%
+  count(cancer_flag) %>%
+  mutate(
+    Group = "Cancer Diagnosis",
+    Subgroup = as.character(cancer_flag),
+    Value = as.character(n)
+  ) %>%
+  select(Group, Subgroup, Value)
+
+# ─── Combine Table ─────────────────────────────────────────────────
+
+summary_table <- bind_rows(
+  total_row,
+  age_row,
+  sex_rows,
+  region_rows,
+  death_rows,
+  top_drugs_rows,
+  ici_exposure_rows,
+  cancer_rows
+)
+
+# ─── Render Table with `gt` ────────────────────────────────────────
+
+Figure1A <- summary_table %>%
+  gt(groupname_col = "Group") %>%
+  tab_header(
+    title = md("**Baseline Characteristics of SJS/TEN Cases in FAERS, 2013-2023**"),
+    subtitle = "Demographic, Exposure, and Drug Summary"
+  ) %>%
+  cols_label(
+    Subgroup = "",
+    Value = "N or Summary"
+  ) %>%
+  tab_options(
+    table.font.names = "Arial",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  )
+
+#Display tabel
+Figure1A 
+```
+
+### FIGURE 1B - STACKED BAR CHART OF ICI-EXPOSED PATIENTS
+
+This generates a stacked bar chart showing the number of SJS/TEN cases
+involving immune checkpoint inhibitors (ICIs), separated by drug or drug
+class and categorized by exposure type. Each bar represents the total
+number of SJS/TEN cases in which a given ICI was either reported as the
+*primary suspect* (dark red) or as *concomitant exposure* (light blue).
+
+```{r}
+# Helper function to count exposed + primary cause
+get_counts <- function(df, colname, label, concept_id) {
+  df %>%
+    summarise(
+      total_exposed = sum(get(colname) == 1, na.rm = TRUE),
+      primary_suspect = sum(drug_concept_id == concept_id, na.rm = TRUE)
+    ) %>%
+    mutate(group = label)
+}
+
+# Individual ICI counts
+individual_counts <- bind_rows(
+  get_counts(final_SJSTEN_dt, "ICI_Pembrolizumab", "Pembrolizumab", 45775965),
+  get_counts(final_SJSTEN_dt, "ICI_Nivolumab", "Nivolumab", 45892628),
+  get_counts(final_SJSTEN_dt, "ICI_Ipilimumab", "Ipilimumab", 40238188),
+  get_counts(final_SJSTEN_dt, "ICI_Atezolizumab", "Atezolizumab", 42629079),
+  get_counts(final_SJSTEN_dt, "ICI_Durvalumab", "Durvalumab", 1594034),
+  get_counts(final_SJSTEN_dt, "ICI_Cemiplimab", "Cemiplimab", 35200783),
+  get_counts(final_SJSTEN_dt, "ICI_Tremelimumab", "Tremelimumab", 741851),
+  get_counts(final_SJSTEN_dt, "ICI_Dostarlimab", "Dostarlimab", 1536789), 
+  get_counts(final_SJSTEN_dt, "ICI_Avelumab", "Avelumab", 1593273)
+)
+
+# Grouped categories (PD-1, PD-L1, etc)
+group_counts <- tibble(
+  group = c("All ICIs", "PD-1", "PD-L1", "CTLA-4", "Dual ICI"),
+  total_exposed = c(
+    sum(final_SJSTEN_dt$ICI == 1, na.rm = TRUE),
+    sum(final_SJSTEN_dt$ICI_PD1 == 1, na.rm = TRUE),
+    sum(final_SJSTEN_dt$ICI_PDL1 == 1, na.rm = TRUE),
+    sum(final_SJSTEN_dt$ICI_CTLA4 == 1, na.rm = TRUE),
+    sum(final_SJSTEN_dt$Dual_ICI == 1, na.rm = TRUE)
+  ),
+  primary_suspect = c(
+    sum(final_SJSTEN_dt$drug_concept_id %in% ici_list, na.rm = TRUE),
+    sum(final_SJSTEN_dt$drug_concept_id %in% pd1_list, na.rm = TRUE),
+    sum(final_SJSTEN_dt$drug_concept_id %in% pdl1_list, na.rm = TRUE),
+    sum(final_SJSTEN_dt$drug_concept_id %in% ctla4_list, na.rm = TRUE),
+    sum(final_SJSTEN_dt$Dual_ICI == 1 & final_SJSTEN_dt$drug_concept_id %in% ici_list, na.rm = TRUE)
+  )
+)
+
+# Combine and reshape data
+plot_data <- bind_rows(individual_counts, group_counts) %>%
+  mutate(other_exposed = total_exposed - primary_suspect) %>%
+  select(group, primary_suspect, other_exposed) %>%
+  tidyr::pivot_longer(cols = c("primary_suspect", "other_exposed"),
+                      names_to = "type", values_to = "count") %>%
+  mutate(type = factor(type, levels = c("other_exposed", "primary_suspect"),
+                       labels = c("Exposed", "Primary Suspect")))
+
+# Plot with bar borders and legend enhancements
+Figure1B <- ggplot(plot_data, aes(x = reorder(group, -count), y = count, fill = type)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.3) +  # Black border
+  scale_fill_manual(
+    values = c("Exposed" = "#B0C4DE", "Primary Suspect" = "#DC143C"),
+    name = "Exposure Type"
+  ) +
+  labs(
+    title = "ICI Exposure in SJS/TEN Cases",
+    x = "Drug or Class",
+    y = "Number of Cases"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    legend.box.background = element_rect(color = "black", fill = NA),
+    legend.title = element_text(face = "bold")
+  )
+
+# Display the figure
+Figure1B
+```
+
+## FIGURE S1 - DEMOGRAPHICS
+
+In this supplementary figure, we'll compare two sets - ICI-primary
+suspect cases, and small-molecule primary suspect cases. We'll also
+include a panel showing what percentage of these cases have strong
+culprit exposure.
+
+```{r figure-s1, fig.width=12, fig.height=10}
+# Subset
+ici_cases <- final_SJSTEN_dt[drug_concept_id %in% unname(ici_list)]
+sm_cases  <- final_SJSTEN_dt[drug_class == "Small Molecule"]
+
+# Label groups
+ici_cases$group <- "ICI-induced"
+sm_cases$group  <- "SM-induced"
+
+# Combine
+demographic_compare_dt <- rbind(ici_cases, sm_cases)
+
+# 🧼 Handle missing
+demographic_compare_dt$region[is.na(demographic_compare_dt$region)] <- "Unknown"
+
+# 🟨 Panel A: Age Group (Stacked)
+panel_age <- demographic_compare_dt %>%
+  count(group, age_group) %>%
+  group_by(group) %>%
+  mutate(percentage = n / sum(n)) %>%
+  ggplot(aes(x = group, y = percentage, fill = age_group)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Age Distribution", x = "", y = "Proportion", fill = "Age (Years)") +
+  theme_minimal(base_size = 12)
+
+# 🟦 Panel B: Sex Distribution (Stacked)
+panel_sex <- demographic_compare_dt %>%
+  count(group, sex) %>%
+  group_by(group) %>%
+  mutate(percentage = n / sum(n)) %>%
+  ggplot(aes(x = group, y = percentage, fill = sex)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Sex Distribution", x = "", y = "Proportion", fill = "Sex") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal(base_size = 12)
+
+# 🟩 Panel C: Region Distribution (Stacked)
+panel_region <- demographic_compare_dt %>%
+  count(group, region) %>%
+  group_by(group) %>%
+  mutate(percentage = n / sum(n)) %>%
+  ggplot(aes(x = group, y = percentage, fill = region)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "Region Distribution", x = "", y = "Proportion", fill = "Region") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal(base_size = 12)
+
+# 🟥 Panel D: Strong Culprit Classification (Three categories)
+ici_ids <- unname(ici_list)
+strong_ids <- unlist(strong_culprit_list)
+
+# ICI group
+ici_bar <- final_SJSTEN_dt[drug_concept_id %in% ici_ids][
+  , .(Group = "ICI-induced", Subgroup = ifelse(StrongCulprit == 1, "Strong Culprit Present (Not PS)", "No Strong Culprit"))
+]
+
+# Small Molecule group
+sm_bar <- final_SJSTEN_dt[drug_class == "Small Molecule"][
+  , Subgroup := fifelse(
+      drug_concept_id %in% strong_ids, 
+      "Strong Culprit (PS)",
+      fifelse(StrongCulprit == 1, "Strong Culprit Present (Not PS)", "No Strong Culprit")
+  )
+][, .(Group = "SM-induced", Subgroup)]
+
+# Combine
+culprit_plot_dt <- rbind(ici_bar, sm_bar)
+
+# Plot
+panel_culprit <- culprit_plot_dt %>%
+  count(Group, Subgroup) %>%
+  group_by(Group) %>%
+  mutate(percentage = n / sum(n)) %>%
+  ggplot(aes(x = Group, y = percentage, fill = factor(Subgroup,
+    levels = c("Strong Culprit (PS)", "Strong Culprit Present (Not PS)", "No Strong Culprit")))) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(
+    values = c(
+      "Strong Culprit (PS)" = "#DC143C",
+      "Strong Culprit Present (Not PS)" = "#B0C4DE",
+      "No Strong Culprit" = "gray80"
+    )
+  ) +
+  labs(
+    title = "Culprit Classification by Drug Type",
+    x = "",
+    y = "Proportion",
+    fill = "Classification"
+  ) +
+  theme_minimal(base_size = 12)
+
+# 🧩 2x2 Final Layout
+Figure_S1 <- (
+  panel_age + panel_sex + panel_region + panel_culprit
+) + plot_layout(ncol = 2)
+
+# Display the figure
+Figure_S1
+```
+
+## FIGURE 2 - DISPROPORTIONALITY ANALYSIS
+
+### Function to Compute Disproportionality
+
+We'll use a unified function that calculates disproportionality metrics
+from final_dt, including filtering down the denominator by an exposure
+if needed.
+
+```{r}
+# This function can compute disproportionality as described above
+compute_disproportionality <- function(
+  final_dt,
+  additional_exposure_col,
+  label_exposure,
+  background_exposure_col = NULL
+) {
+  # Convert factor -> character -> integer safely
+  outcome_flag <- as.integer(as.character(final_dt$SJSTEN))
+  exposure_flag <- as.integer(as.character(final_dt[[additional_exposure_col]]))
+  
+  background_flag <- if (!is.null(background_exposure_col)) {
+    as.integer(as.character(final_dt[[background_exposure_col]]))
+  } else {
+    rep(1L, nrow(final_dt))
+  }
+  
+  # Subsets
+  exposed_rows    <- which(exposure_flag == 1 & background_flag == 1)
+  background_rows <- which(exposure_flag == 0 & background_flag == 1)
+  
+  # Contingency table, coerced to numeric to prevent overflow
+  a <- as.numeric(sum(outcome_flag[exposed_rows] == 1, na.rm = TRUE))
+  b <- as.numeric(sum(outcome_flag[exposed_rows] == 0, na.rm = TRUE))
+  c <- as.numeric(sum(outcome_flag[background_rows] == 1, na.rm = TRUE))
+  d <- as.numeric(sum(outcome_flag[background_rows] == 0, na.rm = TRUE))
+  
+  # Fail-safe
+  if ((a + b) == 0 | (c + d) == 0 | b == 0 | c == 0 | d == 0) {
+    return(data.frame(
+      Exposure = label_exposure,
+      a = a, b = b, c = c, d = d,
+      PRR = NA, PRR_lower = NA, PRR_upper = NA,
+      ROR = NA, ROR_lower = NA, ROR_upper = NA
+    ))
+  }
+  
+  # PRR and SE
+  prr <- (a / (a + b)) / (c / (c + d))
+  prr_se <- sqrt((b / (a * (a + b))) + (d / (c * (c + d))))
+  prr_lower <- exp(log(prr) - 1.96 * prr_se)
+  prr_upper <- exp(log(prr) + 1.96 * prr_se)
+  
+  # ROR and SE
+  ror <- (a * d) / (b * c)
+  ror_se <- sqrt(1 / a + 1 / b + 1 / c + 1 / d)
+  ror_lower <- exp(log(ror) - 1.96 * ror_se)
+  ror_upper <- exp(log(ror) + 1.96 * ror_se)
+  
+  # Output
+  return(data.frame(
+    Exposure = label_exposure,
+    a = a, b = b, c = c, d = d,
+    PRR = prr, PRR_lower = prr_lower, PRR_upper = prr_upper,
+    ROR = ror, ROR_lower = ror_lower, ROR_upper = ror_upper
+  ))
+}
+```
+
+### FIGURE 2A - ICI AS BACKGROUND
+
+The first heatmap will display ICIs on the y and culprits on the X. ICI,
+ICI classes, and FAERS as a whole will be the background populations.
+
+```{r}
+# Define reference populations (Y-axis)
+individual_ici_cols <- grep("^ICI_.*mab$", names(final_dt), value = TRUE)
+individual_ici_labels <- tools::toTitleCase(gsub("^ICI_", "", individual_ici_cols))
+
+reference_cols <- c(
+  NULL, "ICI", "Dual_ICI", "ICI_CTLA4", "ICI_PD1", "ICI_PDL1", individual_ici_cols
+)
+reference_labels <- c(
+  "All FAERS", "All ICIs", "Dual ICI", "CTLA-4", "PD-1", "PD-L1", individual_ici_labels
+)
+
+# Define exposure columns (X-axis)
+# Define all exposure (culprit) groups
+base_additional <- list(
+  "All Culprits" = "AllCulprit",
+  "All Strong Culprits" = "StrongCulprit",
+  "All Weak Culprits" = "WeakCulprit"
+)
+strong_cols <- grep("^Strong_Culprit_", names(final_dt), value = TRUE)
+strong_named <- setNames(strong_cols, tools::toTitleCase(gsub("Strong_Culprit_", "", strong_cols)))
+weak_cols <- grep("^Weak_Culprit_", names(final_dt), value = TRUE)
+weak_named <- setNames(weak_cols, tools::toTitleCase(gsub("Weak_Culprit_", "", weak_cols)))
+additional_groups <- c(base_additional, strong_named, weak_named)
+
+# Loop for All FAERS
+heatmap_results <- list()
+pb <- txtProgressBar(min = 0, max = length(additional_groups), style = 3)
+step <- 0
+
+for (add_label in names(additional_groups)) {
+  add_col <- additional_groups[[add_label]]
+  step <- step + 1
+
+  res <- compute_disproportionality(
+    final_dt,
+    additional_exposure_col = add_col,
+    label_exposure = add_label,
+    background_exposure_col = NULL
+  )
+
+  res$Reference <- "All FAERS"
+  heatmap_results[[length(heatmap_results) + 1]] <- res
+  setTxtProgressBar(pb, step)
+}
+close(pb)
+
+# Loop for other reference populations (ICIs)
+ici_cols <- c("ICI", "Dual_ICI", "ICI_CTLA4", "ICI_PD1", "ICI_PDL1",
+              grep("^ICI_.*mab$", names(final_dt), value = TRUE))
+ici_labels <- c("All ICIs", "Dual ICI", "CTLA-4", "PD-1", "PD-L1",
+                tools::toTitleCase(gsub("^ICI_", "", grep("^ICI_.*mab$", names(final_dt), value = TRUE))))
+
+pb <- txtProgressBar(min = 0, max = length(ici_cols) * length(additional_groups), style = 3)
+step <- 0
+
+for (i in seq_along(ici_cols)) {
+  ref_col <- ici_cols[i]
+  ref_label <- ici_labels[i]
+
+  for (add_label in names(additional_groups)) {
+    add_col <- additional_groups[[add_label]]
+    step <- step + 1
+
+    res <- compute_disproportionality(
+      final_dt,
+      additional_exposure_col = add_col,
+      label_exposure = add_label,
+      background_exposure_col = ref_col
+    )
+
+    res$Reference <- ref_label
+    heatmap_results[[length(heatmap_results) + 1]] <- res
+    setTxtProgressBar(pb, step)
+  }
+}
+close(pb)
+
+# Combine all
+heatmap_dt_2A <- data.table::rbindlist(heatmap_results, fill = TRUE)
+```
+
+Now that the dt is made, add some additional columns needed to make the
+heatmap. We need logROR for the heatmap scale (the actual cells will
+show the ROR).
+
+```{r}
+# logROR and standard error
+heatmap_dt_2A[, `:=`(
+  logROR = log(ROR),
+  logROR_se = sqrt(1 / a + 1 / b + 1 / c + 1 / d)
+)]
+
+# Wald p-value using logROR
+heatmap_dt_2A[, p_raw := 2 * pnorm(-abs(logROR) / logROR_se)]
+
+# BH correction and stars
+heatmap_dt_2A[, p_adj := p.adjust(p_raw, method = "BH")]
+heatmap_dt_2A[, stars := fifelse(is.na(p_adj), "",
+                        fifelse(p_adj < 0.001, "***",
+                        fifelse(p_adj < 0.01, "**",
+                        fifelse(p_adj < 0.05, "*", ""))))]
+
+# Confidence interval with brackets and stars
+heatmap_dt_2A[, CI_text := sprintf("[%.1f–%.1f] %s", ROR_lower, ROR_upper, stars)]
+
+# Combine into multi-line label for ggplot
+heatmap_dt_2A[, Label := paste0(
+  "n = ", a, "\n",
+  "ROR = ", round(ROR, 1), "\n",
+  CI_text
+)]
+
+#Clean up memory
+gc()
+```
+
+Then make the plot from this new dt
+
+```{r heatmap_Fig2A, fig.width = 14, fig.height = 10, out.width = "100%"}
+# Define fixed Y-axis order
+fixed_y_order <- c(
+  "All FAERS", "All ICIs", "Dual ICI", "CTLA-4", "PD-1", "PD-L1"
+)
+
+# Extract remaining individual ICIs and order by total 'a'
+ici_extras <- heatmap_dt_2A[
+  !Reference %in% fixed_y_order, 
+  .(a_total = sum(a, na.rm = TRUE)), 
+  by = Reference
+][order(-a_total)]$Reference
+
+# Combine for full Y-axis order
+heatmap_dt_2A[, Reference := factor(Reference, levels = c(fixed_y_order, ici_extras))]
+
+# Preserve X-axis order as entered
+heatmap_dt_2A[, Exposure := factor(Exposure, levels = unique(Exposure))]
+
+# Filter out zero-count cells
+heatmap_plot_dt <- heatmap_dt_2A[a > 0]
+
+# Now plot it
+Figure2A <- ggplot(heatmap_plot_dt, aes(x = Exposure, y = Reference, fill = logROR)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Label), size = 3, lineheight = 1.1, na.rm = TRUE) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", 
+    midpoint = 0, na.value = "grey90",
+    name = "logROR"
+  ) +
+  labs(
+    title = "Additive Effect of Known Culprit Medications on Patients Recieving ICIs",
+    x = "Additional Drug",
+    y = "Reference Population"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid = element_blank()
+  )
+
+# Show it
+Figure2A
+```
+
+### FIGURE 2B - CULPRIT AS BACKGROUND
+
+This time, we'll use patients exposed to culprits as the background
+population, and ICI exposure as additional factors. FAERS will still be
+used as a background population.
+
+```{r}
+# Setup: ICI exposures (X-axis)
+ici_cols <- c("ICI", "Dual_ICI", "ICI_CTLA4", "ICI_PD1", "ICI_PDL1",
+              grep("^ICI_.*mab$", names(final_dt), value = TRUE))
+ici_labels <- c("All ICIs", "Dual ICI", "CTLA-4", "PD-1", "PD-L1",
+                tools::toTitleCase(gsub("^ICI_", "", grep("^ICI_.*mab$", names(final_dt), value = TRUE))))
+
+# Setup: Culprit-based reference groups (Y-axis)
+base_reference <- list(
+  "All Culprits" = "AllCulprit",
+  "All Strong Culprits" = "StrongCulprit",
+  "All Weak Culprits" = "WeakCulprit"
+)
+
+strong_cols <- grep("^Strong_Culprit_", names(final_dt), value = TRUE)
+strong_named <- setNames(as.list(strong_cols), tools::toTitleCase(gsub("^Strong_Culprit_", "", strong_cols)))
+
+weak_cols <- grep("^Weak_Culprit_", names(final_dt), value = TRUE)
+weak_named <- setNames(as.list(weak_cols), tools::toTitleCase(gsub("^Weak_Culprit_", "", weak_cols)))
+
+reference_groups <- c(base_reference, strong_named, weak_named)
+
+heatmap_results <- list()
+pb <- txtProgressBar(min = 0, max = length(ici_cols), style = 3)
+step <- 0
+
+for (i in seq_along(ici_cols)) {
+  exp_col <- ici_cols[i]
+  exp_label <- ici_labels[i]
+  step <- step + 1
+
+  res <- compute_disproportionality(
+    final_dt,
+    additional_exposure_col = exp_col,
+    label_exposure = exp_label,
+    background_exposure_col = NULL  # All FAERS
+  )
+
+  res$Reference <- "All FAERS"
+  heatmap_results[[length(heatmap_results) + 1]] <- res
+  setTxtProgressBar(pb, step)
+}
+close(pb)
+
+
+pb <- txtProgressBar(min = 0, max = length(reference_groups) * length(ici_cols), style = 3)
+step <- 0
+
+for (ref_label in names(reference_groups)) {
+  ref_col <- reference_groups[[ref_label]]
+
+  for (i in seq_along(ici_cols)) {
+    exp_col <- ici_cols[i]
+    exp_label <- ici_labels[i]
+    step <- step + 1
+
+    res <- compute_disproportionality(
+      final_dt,
+      additional_exposure_col = exp_col,
+      label_exposure = exp_label,
+      background_exposure_col = ref_col
+    )
+
+    res$Reference <- ref_label
+    heatmap_results[[length(heatmap_results) + 1]] <- res
+    setTxtProgressBar(pb, step)
+  }
+}
+close(pb)
+
+# Combine results
+heatmap_dt_2B <- data.table::rbindlist(heatmap_results, fill = TRUE)
+
+# Calculate logROR and SE separately to avoid eval order issues
+heatmap_dt_2B[, `:=`(
+  logROR = log(ROR),
+  logROR_se = sqrt(1 / a + 1 / b + 1 / c + 1 / d)
+)]
+
+# p-value and adjustment
+heatmap_dt_2B[, p_raw := 2 * pnorm(-abs(logROR) / logROR_se)]
+heatmap_dt_2B[, p_adj := p.adjust(p_raw, method = "BH")]
+
+# Stars and formatted labels
+heatmap_dt_2B[, stars := fifelse(is.na(p_adj), "",
+                        fifelse(p_adj < 0.001, "***",
+                        fifelse(p_adj < 0.01, "**",
+                        fifelse(p_adj < 0.05, "*", ""))))]
+
+heatmap_dt_2B[, CI_text := sprintf("[%.1f–%.1f] %s", ROR_lower, ROR_upper, stars)]
+heatmap_dt_2B[, Label := paste0("n = ", a, "\nROR = ", round(ROR, 1), "\n", CI_text)]
+
+#Clean up memory
+gc()
+```
+
+Now make the plot
+
+```{r heatmap_Fig2B, fig.width = 14, fig.height = 10, out.width = "100%"}
+# Define fixed X-axis order for ICI exposures
+fixed_ici_order <- c("All ICIs", "Dual ICI", "CTLA-4", "PD-1", "PD-L1")
+
+# Get individual ICIs ordered by descending 'a'
+ici_extras <- heatmap_dt_2B[
+  !Exposure %in% fixed_ici_order,
+  .(a_total = sum(a, na.rm = TRUE)),
+  by = Exposure
+][order(-a_total)]$Exposure
+
+# Apply full X-axis order
+heatmap_dt_2B[, Exposure := factor(Exposure, levels = c(fixed_ici_order, ici_extras))]
+
+# Y-axis (reference populations): use exact input order from the loop
+reference_order <- c(
+  "All FAERS",
+  "All Culprits",
+  "All Strong Culprits",
+  "All Weak Culprits",
+  names(reference_groups)  # individual strong + weak culprits
+)
+
+# Ensure no duplicates
+reference_order <- unique(reference_order)
+
+heatmap_dt_2B[, Reference := factor(Reference, levels = reference_order)]
+
+# Filter out n = 0 cells
+heatmap_plot_dt <- heatmap_dt_2B[a > 0]
+
+#Plot it
+Figure2B <- ggplot(heatmap_plot_dt, aes(x = Exposure, y = Reference, fill = logROR)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Label), size = 3, lineheight = 1.1, na.rm = TRUE) +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0, na.value = "grey90", name = "logROR"
+  ) +
+  labs(
+    title = "Additive Effect of ICI on Patients Recieving Known Culprit Medications",
+    x = "ICI Exposure",
+    y = "Reference Drug Population"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    panel.grid = element_blank()
+  )
+
+#Show it
+Figure2B
+```
+
+## FIGURE S2 - ALLOPURINOL LOGIT
+
+This logistic regression subsets the entire dataset to just those
+patients exposed to allopurinol, and asks whether co-exposure to ICI is
+associated with the development of SJS/TEN. There are 43 patients
+co-exposed to allopurinol and an ICI (which we determined from Figure
+2), which is sufficient for a logistic regression.
+
+```{r}
+# Subset allopurinol cases from final_dt
+final_dt_allopurinol_any <- final_dt[Strong_Culprit_Allopurinol == 1]
+
+# Fit the logistic regression model
+logit_allopurinol_any_ICI <- glm(
+  SJSTEN ~ age_group + sex + NumDrugs + ICI + cancer_flag,
+  data = final_dt_allopurinol_any,
+  family = binomial
+)
+
+# Tidy the results
+summary_tbl_FigS2 <- logit_summary_table(logit_allopurinol_any_ICI, final_dt_allopurinol_any)  # Converts log-odds to ORs
+
+# Transform into gt table
+FigureS2 <- summary_tbl_FigS2 %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+      Variable == "ICI" ~ "ICI Exposure",
+      Variable == "cancer_flag" ~ "Cancer Diagnosis",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Level == "M" ~ "Male",
+      Level == "F" ~ "Female",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "NS" ~ "Not Specified",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "0" ~ "No",
+      TRUE ~ Level
+    )
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**SJS/TEN in Patients Exposed to Allopurinol**"),
+    subtitle = "Multivariable Logistic Regression, FAERS 2013-2023",
+  ) %>%
+  cols_label(
+    Level = "",
+    N = "N (Total)",
+    SJS_TEN_Cases = "N (SJS/TEN)",
+    OR = "Odds Ratio",
+    CI = "95% CI",
+    P = "P-value"
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-") %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  )
+
+# Display the table
+FigureS2
+```
+
+## FIGURE S3 - TMP-SMX LOGIT
+
+This logistic regression subsets the entire dataset to just those
+patients exposed to TMP-SMX, and asks whether co-exposure to ICI is
+associated with the development of SJS/TEN. There are 43 co-exposed
+patients in this analysis.
+
+```{r}
+#Subset TMP/SMX cases from final_dt
+final_dt_tmpsmx_any <- final_dt[Strong_Culprit_TMP_SMX == 1]
+
+# Fit the logistic regression model
+logit_tmpsmx_any_ICI <- glm(
+  SJSTEN ~ age_group + sex + NumDrugs + ICI + cancer_flag,
+  data = final_dt_tmpsmx_any,
+  family = binomial
+)
+
+# Tidy the results
+summary_tbl_FigS3 <- logit_summary_table(logit_tmpsmx_any_ICI, final_dt_tmpsmx_any)  # Converts log-odds to ORs
+
+# Create gt table by renaming variables to human-readable names
+FigureS3 <- summary_tbl_FigS3 %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+      Variable == "ICI" ~ "ICI Exposure",
+      Variable == "cancer_flag" ~ "Cancer Diagnosis",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Level == "M" ~ "Male",
+      Level == "F" ~ "Female",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "NS" ~ "Not Specified",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "0" ~ "No",
+      TRUE ~ Level
+    )
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**SJS/TEN in Patients Exposed to TMP-SMX**"),
+    subtitle = "Multivariable Logistic Regression, FAERS 2013-2023"
+  ) %>%
+  cols_label(
+    Level = "",
+    N = "N (Total)",
+    SJS_TEN_Cases = "N (SJS/TEN)",
+    OR = "Odds Ratio",
+    CI = "95% CI",
+    P = "P-value"
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-") %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  )
+
+# Display the figure
+FigureS3
+```
+
+## FIGURE 3 - DEVELOPMENT AND MORTALITY LOGIT, ENTIRE FAERS
+
+This figure is a pair of logistic regressions for development and
+mortality of SJS/TEN in the entire dataset. The first (development) one
+will use all of final_dt, and have SJS/TEN as the outcome. The second
+(mortality) will use final_SJSTEN_dt (final_dt restricted to just
+SJS/TEN), and use death as the outcome. For covariates, we will use ICI,
+strong culprit exposure, weak culprit exposure, age, sex, and cancer
+diagnosis. We will create both logistic regressions then unify them into
+one table.
+
+```{r}
+## Conduct the logistic regression
+# Development of SJS/TEN, logistic regression
+Fig3_development <- glm(SJSTEN ~ ICI + StrongCulprit + WeakCulprit + age_group + sex + cancer_flag + NumDrugs, data = final_dt, family = binomial())
+
+# Mortality in SJS/TEN patients, logistic regression
+Fig3_mortality <- glm(Death ~ ICI + StrongCulprit + WeakCulprit + age_group + sex + cancer_flag + NumDrugs, data = final_SJSTEN_dt, family = binomial())
+```
+
+Now create the tables:
+
+```{r}
+## Generate summary tables
+Fig3_development_tbl <- logit_summary_table(Fig3_development, final_dt)
+Fig3_development_tbl
+
+Fig3_mortality_tbl <- logit_summary_table(Fig3_mortality, final_SJSTEN_dt)
+Fig3_mortality_tbl
+
+## Combine the tables
+Fig3_combined_tbl <- Fig3_development_tbl %>%
+    full_join(Fig3_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+# Format the table into gt format
+Figure3_final <- Fig3_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable %in% c("age_group") ~ "Age (Years)",
+        Variable %in% c("ICI", "ICI_Count_Factor") ~ "ICI Exposure",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "cancer_flag" ~ "Cancer Diagnosis",
+        Variable == "WeakCulprit" ~ "Exposure to Weak Culprit",
+        Variable == "StrongCulprit" ~ "Exposure to Strong Culprit",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+         Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Create gt table
+Figure3_final <- Figure3_final %>%
+    select(
+      Variable, Level,
+      `N (Total)` = N_dev,
+      `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+      `N (Deaths)` = SJS_TEN_Cases_mort,
+      `OR (Dev)` = OR_dev,
+      `95% CI (Dev)` = CI_dev,
+      `P (Dev)` = P_dev,
+      `OR (Mort)` = OR_mort,
+      `95% CI (Mort)` = CI_mort,
+      `P (Mort)` = P_mort
+    ) %>%
+    gt(groupname_col = "Variable") %>%
+    tab_header(
+      title = md("**Predictors of SJS/TEN Development and Mortality**"), subtitle = "Multivariate Logistic Regression on All FAERS Reports, 2013-2023"
+    ) %>%
+    cols_align(align = "left", columns = Level) %>%
+    cols_width(everything() ~ px(100)) %>%
+    tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+    ) %>%
+    sub_missing(columns = everything(), missing_text = "-")
+
+# Show the table
+Figure3_final
+```
+
+## FIGURE S4 - RESTRICTED LOGIT (EXPOSURE VARIABLES REMOVED)
+
+One of the unusual findings in Figure 3 is that cancer is negatively
+associated with the development of SJS/TEN. Previous literature has
+reported the opposite association, however those studies don't account
+for other exposures a lot of the time. We can figure this out by
+removing variables by logistic regression (namely, the culprit exposure
+and ICI variables), and seeing if this association changes.
+
+```{r}
+## Conduct the logistic regression (on fewer variables)
+# Development of SJS/TEN, logistic regression
+FigS4_development <- glm(SJSTEN ~ age_group + sex + cancer_flag + NumDrugs, data = final_dt, family = binomial())
+
+# Mortality in SJS/TEN patients, logistic regression
+FigS4_mortality <- glm(Death ~ age_group + sex + cancer_flag + NumDrugs, data = final_SJSTEN_dt, family = binomial())
+```
+
+Now create the tables:
+
+```{r}
+## Generate summary tables
+FigS4_development_tbl <- logit_summary_table(FigS4_development, final_dt)
+FigS4_development_tbl
+
+FigS4_mortality_tbl <- logit_summary_table(FigS4_mortality, final_SJSTEN_dt)
+FigS4_mortality_tbl
+
+## Combine the tables
+FigS4_combined_tbl <- FigS4_development_tbl %>%
+    full_join(FigS4_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+# Format the table into gt format
+FigureS4_final <- FigS4_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable %in% c("age_group") ~ "Age (Years)",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "cancer_flag" ~ "Cancer Diagnosis",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+         Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Create gt table
+FigureS4_final <- FigureS4_final %>%
+    select(
+      Variable, Level,
+      `N (Total)` = N_dev,
+      `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+      `N (Deaths)` = SJS_TEN_Cases_mort,
+      `OR (Dev)` = OR_dev,
+      `95% CI (Dev)` = CI_dev,
+      `P (Dev)` = P_dev,
+      `OR (Mort)` = OR_mort,
+      `95% CI (Mort)` = CI_mort,
+      `P (Mort)` = P_mort
+    ) %>%
+    gt(groupname_col = "Variable") %>%
+    tab_header(
+      title = md("**Predictors of SJS/TEN Development and Mortality in FAERS**"), subtitle = "Multivariate Logistic Regression on All FAERS Reports, 2013–2023"
+    ) %>%
+    cols_align(align = "left", columns = Level) %>%
+    cols_width(everything() ~ px(100)) %>%
+    tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+    ) %>%
+    sub_missing(columns = everything(), missing_text = "-")
+
+# Show the table
+FigureS4_final
+```
+
+## FIGURE 4 - SMALL-MOLECULE LOGIT, DEVELOPMENT AND MORTALITY
+
+This figure will show the same two multivariable logistic regression
+models (development and mortality), restricted to SJS/TEN cases in which
+a small molecule drug was listed as the primary suspect. For this
+analysis, we will explicitly include the top 10 (by frequency) primary
+suspect drugs as a covariate, and thus cannot use strong and weak
+culprit flags as covariates. We will also use the number of ICI as a
+covariate, rather than mere ICI exposure.
+
+```{r}
+# Subset final_dt to just those with small molecule culprits
+final_dt_sm <- final_dt[drug_class == "Small Molecule"]
+
+## Label the top 10 drugs in each cohort
+## First, in the small molecule cohort
+# Label the top 10 drugs
+top_drugs <- final_dt_sm %>%
+    filter(SJSTEN == 1) %>%
+    count(drug_name, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    pull(drug_name)
+
+# Add a drug_group column
+final_dt_sm <- final_dt_sm %>%
+    mutate(drug_group = ifelse(drug_name %in% top_drugs, drug_name, "Other"))
+
+# Relevel the drug_group factor
+final_dt_sm$drug_group <- relevel(as.factor(final_dt_sm$drug_group), ref = "Other")
+
+# Subset this to SJS/TEN cases for the mortality logit
+final_SJSTEN_dt_sm <- final_dt_sm[SJSTEN == 1]
+
+# Run logistic models
+Figure4_dev_model <- glm(SJSTEN ~ age_group + sex + NumDrugs + ICI_Count_Factor + drug_group, data = final_dt_sm, family = binomial)
+Figure4_mort_model <- glm(Death ~ age_group + sex + NumDrugs + ICI_Count_Factor + drug_group, data = final_SJSTEN_dt_sm, family = binomial)
+```
+
+Now create the tables:
+
+```{r}
+## Generate summary tables
+Fig4_development_tbl <- logit_summary_table(Figure4_dev_model, final_dt_sm)
+Fig4_development_tbl
+
+Fig4_mortality_tbl <- logit_summary_table(Figure4_mort_model, final_SJSTEN_dt_sm)
+Fig4_mortality_tbl
+```
+
+And reformat it:
+
+```{r}
+## Combine the tables
+Fig4_combined_tbl <- Fig4_development_tbl %>%
+    full_join(Fig4_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+# Format the table into gt format
+Figure4_final <- Fig4_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable == "age_group" ~ "Age (Years)",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "ICI_Count_Factor" ~ "ICI Exposure",
+        Variable == "drug_group" ~ "Causative Drug",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+        Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Create gt table
+Figure4_final <- Figure4_final %>%
+    select(
+      Variable, Level,
+      `N (Total)` = N_dev,
+      `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+      `N (Deaths)` = SJS_TEN_Cases_mort,
+      `OR (Dev)` = OR_dev,
+      `95% CI (Dev)` = CI_dev,
+      `P (Dev)` = P_dev,
+      `OR (Mort)` = OR_mort,
+      `95% CI (Mort)` = CI_mort,
+      `P (Mort)` = P_mort
+    ) %>%
+    gt(groupname_col = "Variable") %>%
+    tab_header(
+      title = md("**Predictors of Small-Molecule-Induced SJS/TEN Development and Mortality**"), subtitle = "Multivariate Logistic Regression on FAERS, 2013-2023 (Restricted to Small Molecule Primary Suspects)"
+    ) %>%
+    cols_align(align = "left", columns = Level) %>%
+    cols_width(everything() ~ px(100)) %>%
+      tab_options(
+      table.font.names = "Times",
+      table.font.size = 12,
+      heading.title.font.size = 14,
+      heading.subtitle.font.size = 12,
+      row_group.as_column = TRUE,
+      data_row.padding = px(4)
+    ) %>%
+    sub_missing(columns = everything(), missing_text = "-")
+
+# Show the table
+Figure4_final
+```
+
+## FIGURE S5 - SMALL-MOLECULE LOGIT, CANCER PATIENTS ONLY, DEVELOPMENT AND MORTALITY
+
+This figure is a repeat of Figure 4, but isolated to cancer patients.
+The reason we used a sensitivity analysis, rather than including cancer
+as a covariate in Figure 4, is that the causative drugs are very
+different between cancer patients and non-cancer patients. We will again
+show two multivariable logistic regression models, restricted to SJS/TEN
+cases in which a small molecule drug was listed as the primary suspect.
+
+```{r}
+# Subset final_dt to just those with small molecule culprits
+final_dt_sm_cancer <- final_dt[drug_class == "Small Molecule" & cancer_flag == 1]
+
+## Label the top 10 drugs in each cohort
+## First, in the small molecule cohort
+# Label the top 10 drugs
+top_drugs <- final_dt_sm_cancer %>%
+    filter(SJSTEN == 1) %>%
+    count(drug_name, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    pull(drug_name)
+
+# Add a drug_group column
+final_dt_sm_cancer <- final_dt_sm_cancer %>%
+    mutate(drug_group = ifelse(drug_name %in% top_drugs, drug_name, "Other"))
+
+# Relevel the drug_group factor
+final_dt_sm_cancer$drug_group <- relevel(as.factor(final_dt_sm_cancer$drug_group), ref = "Other")
+
+# Subset this to SJS/TEN cases for the mortality logit
+final_SJSTEN_dt_sm_cancer <- final_dt_sm_cancer[SJSTEN == 1]
+
+# Run logistic models
+FigureS5_dev_model <- glm(SJSTEN ~ age_group + sex + NumDrugs + ICI_Count_Factor + drug_group, data = final_dt_sm_cancer, family = binomial)
+FigureS5_mort_model <- glm(Death ~ age_group + sex + NumDrugs + ICI_Count_Factor + drug_group, data = final_SJSTEN_dt_sm_cancer, family = binomial)
+```
+
+Now create the tables:
+
+```{r}
+## Generate summary tables
+FigS5_development_tbl <- logit_summary_table(FigureS5_dev_model, final_dt_sm_cancer)
+FigS5_development_tbl
+
+FigS5_mortality_tbl <- logit_summary_table(FigureS5_mort_model, final_SJSTEN_dt_sm_cancer)
+FigS5_mortality_tbl
+```
+
+And reformat it:
+
+```{r}
+## Combine the tables
+FigS5_combined_tbl <- FigS5_development_tbl %>%
+    full_join(FigS5_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+# Format the table into gt format
+FigureS5_final <- FigS5_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable == "age_group" ~ "Age (Years)",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "ICI_Count_Factor" ~ "ICI Exposure",
+        Variable == "drug_group" ~ "Causative Drug",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+        Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Create gt table
+FigureS5_final <- FigureS5_final %>%
+    select(
+      Variable, Level,
+      `N (Total)` = N_dev,
+      `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+      `N (Deaths)` = SJS_TEN_Cases_mort,
+      `OR (Dev)` = OR_dev,
+      `95% CI (Dev)` = CI_dev,
+      `P (Dev)` = P_dev,
+      `OR (Mort)` = OR_mort,
+      `95% CI (Mort)` = CI_mort,
+      `P (Mort)` = P_mort
+    ) %>%
+    gt(groupname_col = "Variable") %>%
+    tab_header(
+      title = md("**Predictors of Small-Molecule-Induced SJS/TEN Development and Mortality (Cancer Patients)**"), subtitle = "Multivariate Logistic Regression on FAERS, 2013-2023 (Restricted to Small Molecule Primary Suspects With Cancer Diagnosis)"
+    ) %>%
+    cols_align(align = "left", columns = Level) %>%
+    cols_width(everything() ~ px(100)) %>%
+      tab_options(
+      table.font.names = "Times",
+      table.font.size = 12,
+      heading.title.font.size = 14,
+      heading.subtitle.font.size = 12,
+      row_group.as_column = TRUE,
+      data_row.padding = px(4)
+    ) %>%
+    sub_missing(columns = everything(), missing_text = "-")
+
+# Show the table
+FigureS5_final
+```
+
+## FIGURE S6 - ICI-INDUCED SJS/TEN LOGIT
+
+Figure S6 presents the multivariate logistic regression results for
+predictors of ICI-induced SJS/TEN development and mortality. The
+analysis is restricted to cases where an immune checkpoint inhibitor
+(ICI) is the primary suspect drug. Covariates in the model include age
+group, sex, number of concomitant drugs, and culprit drug
+classification.
+
+Odds ratios and 95% confidence intervals are shown for both the
+likelihood of developing SJS/TEN and the risk of mortality among those
+cases. Scientific notation is selectively applied for values exceeding
+999 to improve readability. Unlike the other logits, categorical
+variables were explicitly re-coded so that the "Unknown" age group
+serves as the reference level, because the 0-20 level has no entries.
+
+```{r}
+# Subset final_dt to only cases in which ICI are the primary suspect
+final_dt_ici_cases_only <- final_dt[drug_concept_id %in% ici_list]
+final_dt_ici_cases_only$drug_name <- factor(final_dt_ici_cases_only$drug_name)
+
+# Subset final_dt to only cases in which ICI are the primary suspect
+final_dt_ici_cases_only$age_group <- relevel(final_dt_ici_cases_only$age_group, ref = "Unknown")
+
+# Subset this to SJS/TEN cases for the mortality logit
+final_SJSTEN_dt_ici_cases_only <- final_dt_ici_cases_only[SJSTEN == 1]
+
+# Create model
+FigureS6_dev_model <- glm(SJSTEN ~ age_group + sex + StrongCulprit + WeakCulprit + drug_name + NumDrugs,
+family = binomial(), data = final_dt_ici_cases_only)
+FigureS6_mort_model <- glm(Death ~ age_group + sex + StrongCulprit + WeakCulprit + drug_name + NumDrugs, data = final_SJSTEN_dt_ici_cases_only, family = binomial)
+```
+
+Then generate the tables
+
+```{r}
+## Generate summary tables
+FigS6_development_tbl <- logit_summary_table(FigureS6_dev_model, final_dt_ici_cases_only)
+FigS6_development_tbl
+
+FigS6_mortality_tbl <- logit_summary_table(FigureS6_mort_model, final_SJSTEN_dt_ici_cases_only)
+FigS6_mortality_tbl
+```
+
+And reformat it:
+
+```{r}
+## Combine the tables
+FigS6_combined_tbl <- FigS6_development_tbl %>%
+    full_join(FigS6_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+# Rename variables
+FigureS6_final <- FigS6_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable == "age_group" ~ "Age (Years)",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "WeakCulprit" ~ "Exposure to Weak Culprit",
+        Variable == "StrongCulprit" ~ "Exposure to Strong Culprit",
+        Variable == "drug_name" ~ "Causative Drug",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+        Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Apply formatting
+FigureS6_final <- FigureS6_final %>%
+  select(
+    Variable, Level,
+    `N (Total)` = N_dev,
+    `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+    `N (Deaths)` = SJS_TEN_Cases_mort,
+    `OR (Dev)` = OR_dev,
+    `95% CI (Dev)` = CI_dev,
+    `P (Dev)` = P_dev,
+    `OR (Mort)` = OR_mort,
+    `95% CI (Mort)` = CI_mort,
+    `P (Mort)` = P_mort
+  ) %>%
+  mutate(
+    `OR (Dev)` = ifelse(
+      `OR (Dev)` > 999,
+      formatC(`OR (Dev)`, format = "e", digits = 2),
+      formatC(`OR (Dev)`, format = "f", digits = 2)
+    ),
+    `OR (Mort)` = ifelse(
+      `OR (Mort)` > 999,
+      formatC(`OR (Mort)`, format = "e", digits = 2),
+      formatC(`OR (Mort)`, format = "f", digits = 2)
+    ),
+    `95% CI (Dev)` = map_chr(`95% CI (Dev)`, format_ci),
+    `95% CI (Mort)` = map_chr(`95% CI (Mort)`, format_ci)
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Predictors of ICI-Induced SJS/TEN Development and Mortality**"),
+    subtitle = "Multivariate Logistic Regression on FAERS, 2013–2023 (Restricted to ICI Primary Suspects)"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+
+# Show the table
+FigureS6_final
+```
+
+## FIGURE S7 - ICI-INDUCED (GROUPED) SJS/TEN LOGIT
+
+We repeat the construction of figure S6, BUT, with grouping the
+causative ICI by mechanism. If the patient is exposed to more than one
+ICI and they have different targets, then it's coded as "multiple".
+
+```{r}
+# Create new ICI category
+final_dt_ici_cases_only <- final_dt_ici_cases_only %>%
+  mutate(
+    ICI_causative = case_when(
+      rowSums(across(c(ICI_PD1, ICI_PDL1, ICI_CTLA4)) == 1, na.rm = TRUE) >= 2 ~ "Multiple",
+      ICI_PD1 == 1 ~ "PD-1",
+      ICI_PDL1 == 1 ~ "PD-L1",
+      ICI_CTLA4 == 1 ~ "CTLA-4",
+      TRUE ~ "Other"
+    )
+  )
+
+final_dt_ici_cases_only$ICI_causative <- factor(
+  final_dt_ici_cases_only$ICI_causative,
+  levels = c("CTLA-4", "PD-L1", "PD-1", "Multiple"),
+  exclude = NULL
+)
+
+final_dt_ici_cases_only$ICI_causative <- relevel(final_dt_ici_cases_only$ICI_causative, ref = "CTLA-4")
+
+
+# Subset this to SJS/TEN cases for the mortality logit
+final_SJSTEN_dt_ici_cases_only <- final_dt_ici_cases_only[SJSTEN == 1]
+
+# Create model
+FigureS7_dev_model <- glm(SJSTEN ~ age_group + sex + StrongCulprit + WeakCulprit + ICI_causative + NumDrugs,
+family = binomial(), data = final_dt_ici_cases_only)
+FigureS7_mort_model <- glm(Death ~ age_group + sex + StrongCulprit + WeakCulprit + ICI_causative + NumDrugs, data = final_SJSTEN_dt_ici_cases_only, family = binomial)
+```
+
+Then generate the tables
+
+```{r}
+## Generate summary tables
+FigS7_development_tbl <- logit_summary_table(FigureS7_dev_model, final_dt_ici_cases_only)
+FigS7_development_tbl
+
+FigS7_mortality_tbl <- logit_summary_table(FigureS7_mort_model, final_SJSTEN_dt_ici_cases_only)
+FigS7_mortality_tbl
+```
+
+And reformat it:
+
+```{r}
+## Combine the tables
+FigS7_combined_tbl <- FigS7_development_tbl %>%
+    full_join(FigS7_mortality_tbl, by = c("Variable", "Level"), suffix = c("_dev", "_mort"))
+
+FigureS7_final <- FigS7_combined_tbl %>%
+    mutate(
+      Variable = case_when(
+        Variable == "age_group" ~ "Age (Years)",
+        Variable == "sex" ~ "Sex",
+        Variable == "NumDrugs" ~ "Number of Concomittant Drugs",
+        Variable == "WeakCulprit" ~ "Exposure to Weak Culprit",
+        Variable == "StrongCulprit" ~ "Exposure to Strong Culprit",
+        Variable == "ICI_causative" ~ "Causative ICI Class",
+        TRUE ~ Variable
+      ),
+      Level = case_when(
+        Variable == "Number of Concomittant Drugs" ~ "Per Unit Increase",
+        Level == "0 (ref)" ~ "No (ref)",
+        Level == "1" ~ "Yes",
+        Level == "F (ref)" ~ "Female (ref)",
+        Level == "M" ~ "Male",
+        Level == "NS" ~ "Not Specified",
+        is.na(Level) | Level == "" ~ "-",
+        TRUE ~ Level
+      )
+    ) %>%
+    arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))
+
+# Apply formatting
+FigureS7_final <- FigureS7_final %>%
+  select(
+    Variable, Level,
+    `N (Total)` = N_dev,
+    `N (SJS/TEN)` = SJS_TEN_Cases_dev,
+    `N (Deaths)` = SJS_TEN_Cases_mort,
+    `OR (Dev)` = OR_dev,
+    `95% CI (Dev)` = CI_dev,
+    `P (Dev)` = P_dev,
+    `OR (Mort)` = OR_mort,
+    `95% CI (Mort)` = CI_mort,
+    `P (Mort)` = P_mort
+  ) %>%
+  mutate(
+    `OR (Dev)` = ifelse(
+      `OR (Dev)` > 999,
+      formatC(`OR (Dev)`, format = "e", digits = 2),
+      formatC(`OR (Dev)`, format = "f", digits = 2)
+    ),
+    `OR (Mort)` = ifelse(
+      `OR (Mort)` > 999,
+      formatC(`OR (Mort)`, format = "e", digits = 2),
+      formatC(`OR (Mort)`, format = "f", digits = 2)
+    ),
+    `95% CI (Dev)` = map_chr(`95% CI (Dev)`, format_ci),
+    `95% CI (Mort)` = map_chr(`95% CI (Mort)`, format_ci)
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Predictors of ICI-Induced SJS/TEN Development and Mortality**"),
+    subtitle = "Multivariate Logistic Regression on FAERS, 2013–2023 (Restricted to ICI Primary Suspects, Grouped by Class)"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+
+# Show the table
+FigureS7_final
+```
+
+## FIGURE 5 - LATENCY, ALL SJS/TEN
+
+This section generates latency models and Kaplan-Meier curves. We will
+generate three figures. Each figure will have a Kaplan-Meier curve as
+the "A" panel, and a table of Cox proportional hazards model results in
+the "B" panel.
+
+-   One of the whole dataset, using ICI exposure, cancer diagnosis, and
+    culprit exposures as covariates (similar to Figure 3)
+
+-   One of small-molecule causes, using ICI exposure and causative drug
+    as covariates (similar to Figure 4)
+
+-   One of small-molecule causes isolated to cancer diagnoses (similar
+    to Figure S5).
+
+First, merge TTE information with final_dt.
+
+```{r}
+# Create version of final_dt with TTE information
+final_dt_tte <- merge(
+   final_dt[, .(compositeid, age_group, sex, NumDrugs, ICI_Count_Factor, drug_name, drug_class, SJSTEN, ICI, cancer_flag, StrongCulprit, WeakCulprit)],
+  drug_TTE_sjsten[, .(compositeid, TTE)],
+    by = "compositeid")
+  
+# Filter down to SJS/TEN cases with intact TTE information
+sjsten_tte_data <- final_dt_tte %>% filter(SJSTEN == 1, !is.na(TTE))
+```
+
+Now generate the additional two cohorts.
+
+```{r}
+#Small-molecule cohort (Figure S8)
+sjsten_tte_data_sm <- sjsten_tte_data[drug_class == "Small Molecule"]
+                                      
+#Small-molecule cancer cohort (Figure S9)
+sjsten_tte_data_sm_cancer <- sjsten_tte_data_sm[cancer_flag == 1]
+```
+
+Create the drug_group factor for each cohort.
+
+```{r}
+## Fix the drug_group for the whole cohort
+# Do the top drugs thing
+top_drugs <- sjsten_tte_data %>% 
+    count(drug_name, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    pull(drug_name)
+
+# Create the drug_group factor
+sjsten_tte_data <- sjsten_tte_data %>%
+    mutate(drug_group = ifelse(drug_name %in% top_drugs, drug_name, "Other"))
+
+# Relevel the top drugs so "Other" is the reference  
+sjsten_tte_data$drug_group <- relevel(as.factor(sjsten_tte_data$drug_group), ref = "Other")
+
+## Fix the drug_group for the sm cohort
+# Do the top drugs thing
+top_drugs_sm <- sjsten_tte_data_sm %>% 
+    count(drug_name, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    pull(drug_name)
+
+# Create the drug_group factor
+sjsten_tte_data_sm <- sjsten_tte_data_sm %>%
+    mutate(drug_group = ifelse(drug_name %in% top_drugs_sm, drug_name, "Other"))
+
+# Relevel the top drugs so "Other" is the reference  
+sjsten_tte_data_sm$drug_group <- relevel(as.factor(sjsten_tte_data_sm$drug_group), ref = "Other")
+
+## Fix the drug_group for the sm+cancer cohort
+# Do the top drugs thing
+top_drugs_sm_cancer <- sjsten_tte_data_sm_cancer %>% 
+    count(drug_name, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    pull(drug_name)
+
+# Create the drug_group factor
+sjsten_tte_data_sm_cancer <- sjsten_tte_data_sm_cancer %>%
+    mutate(drug_group = ifelse(drug_name %in% top_drugs_sm_cancer, drug_name, "Other"))
+
+# Relevel the top drugs so "Other" is the reference  
+sjsten_tte_data_sm_cancer$drug_group <- relevel(as.factor(sjsten_tte_data_sm_cancer$drug_group), ref = "Other")
+```
+
+Then use these to generate the figures.
+
+```{r}
+# Create a survival object  
+surv_obj_Fig5 <- Surv(time = sjsten_tte_data$TTE, event = rep(1, nrow(sjsten_tte_data)))
+  
+# Create the model
+Figure5_model <- coxph(
+    surv_obj_Fig5 ~ ICI + age_group + sex + NumDrugs + StrongCulprit + WeakCulprit + cancer_flag,
+    data = sjsten_tte_data, model = TRUE
+)
+
+# Extract the results
+Fig5_results_tbl <- cox_summary_table(Figure5_model, sjsten_tte_data)
+Fig5_results_tbl
+```
+
+Then we can turn this into a gt table.
+
+```{r}
+# Format the table like the others
+Figure5B_final <- Fig5_results_tbl %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomitant Drugs",
+      Variable == "drug_group" ~ "Causative Drug",
+      Variable == "ICI" ~ "ICI Exposure",
+      Variable == "cancer_flag" ~ "Cancer Diagnosis",
+      Variable == "StrongCulprit" ~ "Exposure to Strong Culprit",
+      Variable == "WeakCulprit" ~ "Exposure to Weak Culprit",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Variable == "Number of Concomitant Drugs" ~ "Per Unit Increase",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "M" ~ "Male",
+      Level == "NS" ~ "Not Specified",
+      is.na(Level) | Level == "" ~ "-",
+      TRUE ~ Level
+    )
+  ) %>%
+  arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))  # Ensure reference levels show first
+
+# Create gt table
+Figure5B_final <- Figure5B_final %>%
+  select(
+    Variable, Level,
+    `N` = N,
+    `HR` = HR,
+    `95% CI` = CI,
+    `P` = P
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Latency Model - SJS/TEN**"),
+    subtitle = "Cox Proportional Hazards Model for Time-to-Onset of SJS/TEN"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+# Display table
+Figure5B_final
+```
+
+Then make the Kaplan-Meier curves also.
+
+```{r}
+# Re-create a variable to combine ICI and cancer, for ease
+sjsten_tte_data <- sjsten_tte_data %>%
+  mutate(KM_group = case_when(
+    ICI == 1 ~ "ICI",
+    ICI == 0 & cancer_flag == 0 ~ "No ICI, No Cancer",
+    ICI == 0 & cancer_flag == 1 ~ "No ICI, Cancer"
+  )) %>%
+  mutate(KM_group = factor(KM_group, levels = c("No ICI, No Cancer", "No ICI, Cancer", "ICI")))
+
+# Refit survival object with updated ICI levels
+fit_km_Fig5A <- survfit(surv_obj_Fig5 ~ KM_group, data = sjsten_tte_data)
+
+# Plot with reordered strata
+Figure5A_plot <- ggsurvplot(
+  fit_km_Fig5A,
+  data = sjsten_tte_data,
+  pval = TRUE,
+  risk.table = TRUE,
+  conf.int = TRUE,
+  risk.table.col = "strata",
+  legend.title = "Group",
+  legend.labs = c("No ICI, No Cancer", "No ICI, Cancer", "ICI"),
+  title = "Time to Onset in SJS/TEN",
+  xlab = "Days to Onset",
+  ylab = "Survival Probability",
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(base_size = 12),
+  break.time.by = 20
+)
+```
+
+Modify the plot to add a table:
+
+```{r Figure5A, fig.width = 14, fig.height = 8, out.width = "100%"}
+# 🧮 Create summary stats table
+summary_table_5A <- sjsten_tte_data[, .(
+  `Median [IQR], days` = sprintf(
+    "%.1f [%.1f–%.1f]",
+    median(TTE),
+    quantile(TTE, 0.25),
+    quantile(TTE, 0.75)
+  ),
+  `Mean [95%% CI], days` = {
+    m <- mean(TTE)
+    se <- sd(TTE) / sqrt(.N)
+    sprintf("%.1f [%.1f–%.1f]", m, m - 1.96 * se, m + 1.96 * se)
+  }
+), by = KM_group]
+
+# 🏷️ Rename for display
+setnames(summary_table_5A, "KM_group", "Group")
+
+# 📐 Reorder rows to match plot legend
+summary_table_5A <- summary_table_5A[match(c("No ICI, No Cancer", "No ICI, Cancer", "ICI"), Group)]
+
+# 🎨 Table theme (simple black text)
+table_theme <- ttheme_default(
+  core = list(fg_params = list(col = "black")),
+  colhead = list(fg_params = list(fontface = 2))
+)
+
+# 🧩 Add table to main plot (not risk table)
+Figure5A_plot$plot <- Figure5A_plot$plot +
+  geom_table(
+    data = data.frame(x = 80, y = 0.9),
+    aes(x = x, y = y, label = list(summary_table_5A)),
+    table.theme = table_theme,
+    hjust = 0,
+    vjust = 1
+  )
+
+# 📈 Final display
+Figure5A_plot
+```
+
+## FIGURE S8 - LATENCY BY CAUSATIVE DRUG
+
+```{r}
+# ici_list is a named vector of ICI names (e.g., c("12345" = "nivolumab"))
+ici_drug_names <- tolower(names(ici_list))
+
+# Prepare data
+km_data <- copy(sjsten_tte_data)
+
+# Normalize drug_name to lowercase for matching
+km_data[, drug_name_lower := tolower(drug_name)]
+
+# Define causative group based on lowercase drug_name
+km_data[, causative_group := fcase(
+  drug_name_lower %in% ici_drug_names,      "ICI",
+  drug_class == "Biologic",                 "Non-ICI Biologic",
+  drug_class == "Small Molecule",           "Small Molecule"
+)]
+
+# Change to factor
+km_data[, causative_group := factor(causative_group, levels = c("Small Molecule", "Non-ICI Biologic", "ICI"))]
+
+
+# All rows are SJS/TEN cases, so event = 1
+km_data[, event := 1L]
+
+# Fit Cox model (Figure S8B)
+FigureS8_model <- coxph(Surv(TTE, event) ~ causative_group + age_group + sex + cancer_flag + NumDrugs,
+                   data = km_data)
+
+# Summarize model and make a GT table
+FigureS8_results_tbl <- cox_summary_table(FigureS8_model, km_data)
+FigureS8_results_tbl
+```
+
+Then modify the table:
+
+```{r}
+# Format the table
+FigureS8B_final <- FigureS8_results_tbl %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomitant Drugs",
+      Variable == "causative_group" ~ "Causative Drug Class",
+      Variable == "cancer_flag" ~ "Cancer Diagnosis",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Variable == "Number of Concomitant Drugs" ~ "Per Unit Increase",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "M" ~ "Male",
+      Level == "NS" ~ "Not Specified",
+      is.na(Level) | Level == "" ~ "-",
+      TRUE ~ Level
+    )
+  ) %>%
+  arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))  # Ensure reference levels show first
+
+# Create gt table
+FigureS8B_final <- FigureS8B_final %>%
+  select(
+    Variable, Level,
+    `N` = N,
+    `HR` = HR,
+    `95% CI` = CI,
+    `P` = P
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Latency Model - SJS/TEN By Causative Drug Class**"),
+    subtitle = "Cox Proportional Hazards Model for Time-to-Onset of SJS/TEN"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+# Display table
+FigureS8B_final
+```
+
+Perform Kaplan-Meier analysis between the 3 groups:
+
+```{r}
+# Fit Kaplan–Meier model
+km_fit_figS8 <- survfit(Surv(TTE, event) ~ causative_group, data = km_data)
+
+# Plot KM curves (Figure S8A)
+FigureS8A_plot <- ggsurvplot(
+  km_fit_figS8,
+  data = km_data,
+  pval = TRUE,
+  conf.int = TRUE,
+  risk.table = TRUE,
+  risk.table.col = "strata",
+  xlab = "Days to Onset",
+  ylab = "Survival Probability",
+  legend.title = "Causative Drug Group",
+  legend.labs = c("Small Molecule", "Non-ICI Biologic", "ICI"),
+  title = "Time to Onset in SJS/TEN by Causative Drug Class",
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(base_size = 12),
+  break.time.by = 20
+)
+```
+
+Now we'll add the summary table
+
+```{r FigureS8A, fig.width = 14, fig.height = 8, out.width = "100%"}
+# 🧮 Create the summary stats table
+summary_table_S8A <- km_data[, .(
+  `Median [IQR], days` = sprintf(
+    "%.1f [%.1f–%.1f]",
+    median(TTE),
+    quantile(TTE, 0.25),
+    quantile(TTE, 0.75)
+  ),
+  `Mean [95%% CI], days` = {
+    m <- mean(TTE)
+    se <- sd(TTE) / sqrt(.N)
+    sprintf("%.1f [%.1f–%.1f]", m, m - 1.96 * se, m + 1.96 * se)
+  }
+), by = causative_group]
+
+# 🏷️ Rename column for display
+setnames(summary_table_S8A, "causative_group", "Causative Drug")
+
+# 📐 Optional: order rows to match plot legend
+summary_table_S8A <- summary_table_S8A[match(c("Small Molecule", "Non-ICI Biologic", "ICI"), `Causative Drug`)]
+
+# 🎨 Basic table theme (black text)
+table_theme <- ttheme_default(
+  core = list(fg_params = list(col = "black")),
+  colhead = list(fg_params = list(fontface = 2))
+)
+
+# 🧩 Add summary table to main plot (not risk table)
+FigureS8A_plot$plot <- FigureS8A_plot$plot +
+  geom_table(
+    data = data.frame(x = 80, y = 0.9),
+    aes(x = x, y = y, label = list(summary_table_S8A)),
+    table.theme = table_theme,
+    hjust = 0,
+    vjust = 1
+  )
+
+# 📈 Print final figure (KM + risk table + stat table)
+FigureS8A_plot
+```
+
+## FIGURE S9 - LATENCY, SMALL-MOLECULE SJS/TEN
+
+This figure is the latency model for small-molecule SJS/TEN.
+
+```{r}
+# Create a survival object  
+surv_obj_FigS9 <- Surv(time = sjsten_tte_data_sm$TTE, event = rep(1, nrow(sjsten_tte_data_sm)))
+  
+# Create the model
+FigureS9_model <- coxph(
+    surv_obj_FigS9 ~ ICI + age_group + sex + NumDrugs + drug_group,
+    data = sjsten_tte_data_sm, model = TRUE
+)
+
+# Extract the results
+FigS9_results_tbl <- cox_summary_table(FigureS9_model, sjsten_tte_data_sm)
+FigS9_results_tbl
+```
+
+Then we can turn this into a gt table.
+
+```{r}
+# Format the table
+FigureS9B_final <- FigS9_results_tbl %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomitant Drugs",
+      Variable == "drug_group" ~ "Causative Drug",
+      Variable == "ICI" ~ "ICI Exposure",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Variable == "Number of Concomitant Drugs" ~ "Per Unit Increase",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "M" ~ "Male",
+      Level == "NS" ~ "Not Specified",
+      is.na(Level) | Level == "" ~ "-",
+      TRUE ~ Level
+    )
+  ) %>%
+  arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))  # Ensure reference levels show first
+
+# Create gt table
+FigureS9B_final <- FigureS9B_final %>%
+  select(
+    Variable, Level,
+    `N` = N,
+    `HR` = HR,
+    `95% CI` = CI,
+    `P` = P
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Latency Model - Small-Molecule-Induced SJS/TEN**"),
+    subtitle = "Cox Proportional Hazards Model for Time-to-Onset of SJS/TEN"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+# Display table
+FigureS9B_final
+```
+
+Make the Kaplan-Meier Curve
+
+```{r}
+# Relevel ICI so that "1" (ICI) comes first and "0" (No ICI) second
+sjsten_tte_data_sm$ICI <- factor(sjsten_tte_data_sm$ICI, levels = c(1, 0), labels = c("ICI", "No ICI"))
+
+# Refit survival object with updated ICI levels
+fit_km_FigS9A <- survfit(surv_obj_FigS9 ~ ICI, data = sjsten_tte_data_sm)
+
+# Plot with reordered strata
+FigureS9A_plot <- ggsurvplot(
+  fit_km_FigS9A,
+  data = sjsten_tte_data_sm,
+  pval = TRUE,
+  risk.table = TRUE,
+  conf.int = TRUE,
+  risk.table.col = "strata",
+  legend.title = "ICI Exposure",
+  legend.labs = c("ICI", "No ICI"),
+  title = "Time to Onset in Small-Molecule-Induced SJS/TEN",
+  xlab = "Days to Onset",
+  ylab = "Survival Probability",
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(base_size = 12),
+  break.time.by = 20
+)
+```
+
+Modify the plots:
+
+```{r FigureS9A, fig.width = 14, fig.height = 8, out.width = "100%"}
+# 🧮 Create summary stats table
+summary_table_S9A <- sjsten_tte_data_sm[, .(
+  `Median [IQR], days` = sprintf(
+    "%.1f [%.1f–%.1f]",
+    median(TTE),
+    quantile(TTE, 0.25),
+    quantile(TTE, 0.75)
+  ),
+  `Mean [95%% CI], days` = {
+    m <- mean(TTE)
+    se <- sd(TTE) / sqrt(.N)
+    sprintf("%.1f [%.1f–%.1f]", m, m - 1.96 * se, m + 1.96 * se)
+  }
+), by = ICI]
+
+# 🏷️ Rename for display
+setnames(summary_table_S9A, "ICI", "ICI Exposure")
+
+# 📐 Optional: reorder rows to match legend
+summary_table_S9A <- summary_table_S9A[match(c("ICI", "No ICI"), `ICI Exposure`)]
+
+# 🎨 Table theme (simple black text)
+table_theme <- ttheme_default(
+  core = list(fg_params = list(col = "black")),
+  colhead = list(fg_params = list(fontface = 2))
+)
+
+# 🧩 Add table to main plot (not risk table)
+FigureS9A_plot$plot <- FigureS9A_plot$plot +
+  geom_table(
+    data = data.frame(x = 80, y = 0.9),
+    aes(x = x, y = y, label = list(summary_table_S9A)),
+    table.theme = table_theme,
+    hjust = 0,
+    vjust = 1
+  )
+
+# 📈 Final display
+FigureS9A_plot
+```
+
+## FIGURE S10 - LATENCY, SMALL-MOLECULE SJS/TEN, CANCER PATIENTS
+
+This figure is the latency model for the cancer cohort.
+
+```{r}
+# Create a survival object  
+surv_obj_FigS10 <- Surv(time = sjsten_tte_data_sm_cancer$TTE, event = rep(1, nrow(sjsten_tte_data_sm_cancer)))
+  
+# Create the model
+FigureS10_model <- coxph(
+    surv_obj_FigS10 ~ ICI + age_group + sex + NumDrugs + drug_group,
+    data = sjsten_tte_data_sm_cancer, model = TRUE
+)
+
+# Extract the results
+FigS10_results_tbl <- cox_summary_table(FigureS10_model, sjsten_tte_data_sm_cancer)
+FigS10_results_tbl
+```
+
+Then we can turn this into a gt table
+
+```{r}
+# Format the table
+FigureS10B_final <- FigS10_results_tbl %>%
+  mutate(
+    Variable = case_when(
+      Variable == "age_group" ~ "Age (Years)",
+      Variable == "sex" ~ "Sex",
+      Variable == "NumDrugs" ~ "Number of Concomitant Drugs",
+      Variable == "drug_group" ~ "Causative Drug",
+      Variable == "ICI" ~ "ICI Exposure",
+      TRUE ~ Variable
+    ),
+    Level = case_when(
+      Variable == "Number of Concomitant Drugs" ~ "Per Unit Increase",
+      Level == "0 (ref)" ~ "No (ref)",
+      Level == "1" ~ "Yes",
+      Level == "F (ref)" ~ "Female (ref)",
+      Level == "M" ~ "Male",
+      Level == "NS" ~ "Not Specified",
+      is.na(Level) | Level == "" ~ "-",
+      TRUE ~ Level
+    )
+  ) %>%
+  arrange(Variable, desc(str_detect(Level, "\\(ref\\)")))  # Ensure reference levels show first
+
+# Create gt table
+FigureS10B_final <- FigureS10B_final %>%
+  select(
+    Variable, Level,
+    `N` = N,
+    `HR` = HR,
+    `95% CI` = CI,
+    `P` = P
+  ) %>%
+  gt(groupname_col = "Variable") %>%
+  tab_header(
+    title = md("**Latency Model - Small-Molecule-Induced SJS/TEN in Cancer Patients**"),
+    subtitle = "Cox Proportional Hazards Model for Time-to-Onset of SJS/TEN"
+  ) %>%
+  cols_align(align = "left", columns = Level) %>%
+  cols_width(everything() ~ px(100)) %>%
+  tab_options(
+    table.font.names = "Times",
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.subtitle.font.size = 12,
+    row_group.as_column = TRUE,
+    data_row.padding = px(4)
+  ) %>%
+  sub_missing(columns = everything(), missing_text = "-")
+
+# Display table
+FigureS10B_final
+```
+
+Then make the Kaplan-Meier curves also.
+
+```{r}
+# Relevel ICI so that "1" (ICI) comes first and "0" (No ICI) second
+sjsten_tte_data_sm_cancer$ICI <- factor(sjsten_tte_data_sm_cancer$ICI, levels = c(1, 0), labels = c("ICI", "No ICI"))
+
+# Refit survival object with updated ICI levels
+fit_km_FigS10A <- survfit(surv_obj_FigS10 ~ ICI, data = sjsten_tte_data_sm_cancer)
+
+# Plot with reordered strata
+FigureS10A_plot <- ggsurvplot(
+  fit_km_FigS10A,
+  data = sjsten_tte_data_sm_cancer,
+  pval = TRUE,
+  risk.table = TRUE,
+  conf.int = TRUE,
+  risk.table.col = "strata",
+  legend.title = "ICI Exposure",
+  legend.labs = c("ICI", "No ICI"),
+  title = "Time to Onset in Small-Molecule-Induced SJS/TEN (Cancer Patients)",
+  xlab = "Days to Onset",
+  ylab = "Survival Probability",
+  risk.table.height = 0.25,
+  ggtheme = theme_minimal(base_size = 12),
+  break.time.by = 20
+)
+```
+Then modify the plot to add a table:
+
+```{r FigureS10A, fig.width = 14, fig.height = 8, out.width = "100%"}
+# 🧮 Create summary stats table
+summary_table_S10A <- sjsten_tte_data_sm_cancer[, .(
+  `Median [IQR], days` = sprintf(
+    "%.1f [%.1f–%.1f]",
+    median(TTE),
+    quantile(TTE, 0.25),
+    quantile(TTE, 0.75)
+  ),
+  `Mean [95%% CI], days` = {
+    m <- mean(TTE)
+    se <- sd(TTE) / sqrt(.N)
+    sprintf("%.1f [%.1f–%.1f]", m, m - 1.96 * se, m + 1.96 * se)
+  }
+), by = ICI]
+
+# 🏷️ Rename for display
+setnames(summary_table_S10A, "ICI", "ICI Exposure")
+
+# 📐 Optional: reorder rows to match legend
+summary_table_S10A <- summary_table_S10A[match(c("ICI", "No ICI"), `ICI Exposure`)]
+
+# 🎨 Table theme (simple black text)
+table_theme <- ttheme_default(
+  core = list(fg_params = list(col = "black")),
+  colhead = list(fg_params = list(fontface = 2))
+)
+
+# 🧩 Add table to main plot (not risk table)
+FigureS10A_plot$plot <- FigureS10A_plot$plot +
+  geom_table(
+    data = data.frame(x = 80, y = 0.9),
+    aes(x = x, y = y, label = list(summary_table_S10A)),
+    table.theme = table_theme,
+    hjust = 0,
+    vjust = 1
+  )
+
+# 📈 Final display
+FigureS10A_plot
+```
+
+
+
+## FIGURE S11 - VIF HEATMAP
+
+Figure S11 presents a heatmap of generalized variance inflation factors
+(GVIFs) across all multivariable models used in the study. Each row
+corresponds to a covariate, and each column to a specific logistic
+model. No GVIFs exceed typical concern thresholds (\>5), suggesting low
+multicollinearity and good stability in the regression models.
+
+```{r}
+# 📊 Run and store VIFs
+vif_list <- list(
+  "Figure S7 – Mortality"     = car::vif(FigureS7_mort_model)[,1],
+  "Figure S7 – Development"   = car::vif(FigureS7_dev_model)[,1],
+  "Figure S6 – Mortality"     = car::vif(FigureS6_mort_model)[,1],
+  "Figure S6 – Development"   = car::vif(FigureS6_dev_model)[,1],
+  "Figure S5 – Mortality"     = car::vif(FigureS5_mort_model)[,1],
+  "Figure S5 – Development"   = car::vif(FigureS5_dev_model)[,1],
+  "Figure S4 – Mortality"     = car::vif(FigS4_mortality)[,1],
+  "Figure S4 – Development"   = car::vif(FigS4_development)[,1],
+  "Figure S3 (TMP-SMX)"       = car::vif(logit_tmpsmx_any_ICI)[,1],
+  "Figure S2 (Allopurinol)"   = car::vif(logit_allopurinol_any_ICI)[,1],
+  "Figure 4 – Mortality"      = car::vif(Figure4_mort_model)[,1],
+  "Figure 4 – Development"    = car::vif(Figure4_dev_model)[,1],
+  "Figure 3 – Mortality"      = car::vif(Fig3_mortality)[,1],
+  "Figure 3 – Development"    = car::vif(Fig3_development)[,1]
+)
+
+# 🧼 Combine and clean
+vif_df <- bind_rows(lapply(vif_list, function(x) as.data.frame(x) %>% tibble::rownames_to_column("Variable")),
+                    .id = "Model") %>%
+  rename(GVIF = x)
+
+# 🔁 Custom variable label mapping
+label_map <- c(
+  "ICI" = "ICI Exposure (Binary)",
+  "ICI_Count_Factor" = "ICI Exposure (Count)",
+  "ICI_causative" = "ICI Class (Causative Agent)",
+  "NumDrugs" = "Number of Concommitant Drugs",
+  "StrongCulprit" = "Exposure to Strong Culprit",
+  "WeakCulprit" = "Exposure to Weak Culprit",
+  "age_group" = "Age",
+  "cancer_flag" = "Cancer Diagnosis",
+  "sex" = "Sex",
+  "drug_group" = "Causative Drug",
+  "drug_name" = "Causative Drug"
+)
+
+# Apply label map
+vif_df$Variable <- dplyr::recode(vif_df$Variable, !!!label_map)
+
+# 🧹 Remove duplicate “Causative Drug” rows from merged drug_name/group
+vif_df <- vif_df %>% group_by(Model, Variable) %>% summarise(GVIF = max(GVIF), .groups = "drop")
+```
+
+Now plot it:
+
+```{r Figure_S11_HeatmapGVIF, fig.width = 14, fig.height = 8, out.width = "100%"}
+# Heatmap plot
+FigureS11 <- ggplot(vif_df, aes(x = Model, y = Variable, fill = GVIF)) +
+  geom_tile(color = "black", linewidth = 0.4) +
+  scale_fill_distiller(palette = "Blues", direction = 1, name = "GVIF") +
+  geom_text(aes(label = sprintf("%.3f", GVIF)), size = 3) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(face = "bold"),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "GVIF Heatmap Across Models",
+    x = "Model",
+    y = "Variable"
+  )
+
+# Plot it
+FigureS11
+```
+
+# END
