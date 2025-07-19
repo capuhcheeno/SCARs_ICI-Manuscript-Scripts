@@ -17,6 +17,6 @@ filename varchar
 );
 truncate outc;
 
-COPY outc FROM 'D:\2004-2016\all_outc_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY outc FROM 'D:\Current\all_outc_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select filename, count(*) from outc group by filename order by 1
 
