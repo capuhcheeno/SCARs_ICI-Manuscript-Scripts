@@ -33,7 +33,7 @@ filename varchar
 );
 truncate drug_staging_version_A;
 
-COPY drug_staging_version_A FROM 'D:\2004-2016\all_version_A_drug_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY drug_staging_version_A FROM 'D:\Current\all_version_A_drug_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from drug_staging_version_A order by 1;
 
 drop table if exists drug_staging_version_B;
@@ -63,7 +63,7 @@ filename varchar
 );
 truncate drug_staging_version_B;
 
-COPY drug_staging_version_B FROM 'D:\2004-2016\all_version_B_drug_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY drug_staging_version_B FROM 'D:\Current\all_version_B_drug_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select distinct filename from drug_staging_version_B order by 1;
 
 drop table if exists drug;
