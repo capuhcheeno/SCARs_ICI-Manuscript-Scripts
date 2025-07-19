@@ -17,6 +17,6 @@ filename varchar
 );
 truncate rpsr;
 
-COPY rpsr FROM 'D:\2004-2016\all_rpsr_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
+COPY rpsr FROM 'D:\Current\all_rpsr_data_with_filename.txt' WITH DELIMITER E'$' CSV HEADER QUOTE E'\b' ;
 select filename, count(*) from rpsr group by filename order by 1;
 
