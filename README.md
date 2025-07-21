@@ -55,6 +55,7 @@
      - `load_current_reac_table.sql`
      - `load_current_rpsr_table.sql`
      - `load_current_ther_table.sql`
+       
         - Troubleshooting possible formatting issues:
            - Insert a `$` immediately before the column name `filename`
            - Keep only the first header row and delete any additional header rows in `all_version_A_demo_data_with_filename`, `all_version_A_drug_data_with_filename`, `all_version_A_reac_data_with_filename`.
