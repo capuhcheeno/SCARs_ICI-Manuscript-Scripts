@@ -55,6 +55,11 @@
      - `load_current_reac_table.sql`
      - `load_current_rpsr_table.sql`
      - `load_current_ther_table.sql`
+        - Troubleshooting possible formatting issues:
+           - Insert a `$` immediately before the column name `filename`
+           - Keep only the first header row and delete any additional header rows in `all_version_A_demo_data_with_filename`, `all_version_A_drug_data_with_filename`, `all_version_A_reac_data_with_filename`.
+           - Replace every occurrence of `   /ascii` with a `$`
+           - Run the script `Load Data Files from FAERS Website/UTF8 Solution.py` for `all_version_B_drug_data_with_filename` to re-encode
 
 2. **Download and prepare the legacy FAERS data.**
    - Execute `download_legacy_files_from_faers.sh`.
