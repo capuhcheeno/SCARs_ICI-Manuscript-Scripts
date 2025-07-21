@@ -88,7 +88,7 @@
 ## Processing Steps for Deduplication and Mapping
 1. Execute `derive_unique_all_case.sql` from `SCARs_ICI-Manuscript-Scripts/De-duplicate Cases`.
 2. Execute `create_drug_usagi_mapping_table.sql` from `SCARs_ICI-Manuscript-Scripts/Drug Mapping`.
-3. Execute `map_all_drugname_to_rxnorm.py` from `SCARs_ICI-Manuscript-Scripts/Drug Mapping`.
+3. Execute `map_all_drugname_to_rxnorm.sql` from `SCARs_ICI-Manuscript-Scripts/Drug Mapping`.
 
 ## Map Current Data Drug Name to RxNorm – USAGI
 **Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Drug Mapping`
