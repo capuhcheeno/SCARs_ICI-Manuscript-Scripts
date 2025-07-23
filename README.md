@@ -98,17 +98,18 @@
 2. Execute `generate_drug_export_for_usagi.sql`.
 3. Export the set of unmapped codes to a file using pgAdmin client export functionality.
 4. Open the exported file of the unmapped codes in Notepad++ and remove the last empty line to prevent any errors.
-5. Load the vocabulary data files that were previously downloaded from Athena into USAGI to create an index.
-6. Load the file with unmapped codes into the USAGI tool for manual mapping by clicking File > Import Codes.
-7. Enter `source_code` and `source_code_description` into the appropriate boxes.
-8. Avoid entering anything in the frequency field to prevent formatting issues.
-9. Manually map drug names to RxNorm `concept_ids` prioritized by descending frequency of occurrence.
-10. Export the mapped codes from USAGI to a file.
-11. Rename the columns in the exported file accordingly: `source_code`, `source_concept_id`, `source_vocabulary_id`, `source_code_description`, `target_concept_id`, `target_vocabulary_id`, `valid_start_date`, `valid_end_date`, `invalid_reason`.
-12. Delete other unnecessary columns.
-13. Load the USAGI mapped codes file into the `usagi_import` table using pgAdmin client import functionality.
+5. Download from the USAGI file from the Github (https://ohdsi.github.io/Usagi/)
+6. Load the vocabulary data files that were previously downloaded from Athena into USAGI to create an index.
+7. Load the file with unmapped codes into the USAGI tool for manual mapping by clicking File > Import Codes.
+8. Enter `source_code` and `source_code_description` into the appropriate boxes.
+9. Avoid entering anything in the frequency field to prevent formatting issues.
+10. Manually map drug names to RxNorm `concept_ids` prioritized by descending frequency of occurrence.
+11. Export the mapped codes from USAGI to a file.
+12. Rename the columns in the exported file accordingly: `source_code`, `source_concept_id`, `source_vocabulary_id`, `source_code_description`, `target_concept_id`, `target_vocabulary_id`, `valid_start_date`, `valid_end_date`, `invalid_reason`.
+13. Delete other unnecessary columns.
+14. Load the USAGI mapped codes file into the `usagi_import` table using pgAdmin client import functionality.
     -  If the above fails, execute the Python script: `loading USAGI table to USAGI_import.py`.
-14. Execute `load_drug_usagi_mapping.sql`.
+15. Execute `load_drug_usagi_mapping.sql`.
 
 ## Standardization and Producing Files for Analysis
 **Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Drug Mapping`
