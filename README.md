@@ -128,10 +128,16 @@
 - GitHub Repository: https://github.com/capuhcheeno/SCARs_ICI-Manuscript-Scripts
 
 ## Reference Data Preparation
-**Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Analyses of FAERS Data`
+**Scripts located in**: `SCARs_ICI-Manuscript-Scripts/Statistical Analysis`
 
 ### Steps:
-1. Execute XXXXXXXXXXXXXXXXXXXXXX
+1. Execute the following scripts:
+   - FAERS_Mortality_Analysis.Rmd
+   - FAERS_SCAR_Analysis.Rmd
+   - FAERS_Sanitization.Rmd
+   - FAERS_Survival_Analysis.Rmd
+   - FAERS_TTE_Demography.Rmd
+   - FAERS_contingency_validation.Rmd
 
 
 # Instructions to Analyze the FAERS Data with Random Survival Forests
