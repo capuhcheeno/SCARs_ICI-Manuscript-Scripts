@@ -101,8 +101,8 @@
 5. Download from the USAGI file from the Github (https://ohdsi.github.io/Usagi/)
 6. Load the vocabulary data files that were previously downloaded from Athena into USAGI to create an index.
 7. Load the file with unmapped codes into the USAGI tool for manual mapping by clicking File > Import Codes.
-8. Enter `source_code` and `source_code_description` into the appropriate boxes.
-9. Avoid entering anything in the frequency field to prevent formatting issues.
+8. Enter `source_code`, `source_code_description`, and `frequency` into the appropriate boxes.
+9. If `java.lang.NumberFormatException: For input string: ""` pops up, convert the CSV file to an Excel workbook.
 10. Manually map drug names to RxNorm `concept_ids` prioritized by descending frequency of occurrence.
 11. Export the mapped codes from USAGI to a file.
 12. Rename the columns in the exported file accordingly: `source_code`, `source_concept_id`, `source_vocabulary_id`, `source_code_description`, `target_concept_id`, `target_vocabulary_id`, `valid_start_date`, `valid_end_date`, `invalid_reason`.
